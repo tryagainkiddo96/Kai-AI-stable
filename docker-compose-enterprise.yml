@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  # Ollama LLM
+  ollama:
+    image: ollama/ollama:latest
+    container_name: kai-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Kai Enterprise CLI
+  kai-cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kai-cli
+    restart: unless-stopped
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=mistral:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./kai_data:/app/.kai
+      - ./projects:/app/.kai/projects
+    command: python -u kai_enterprise.py
+
+  # Kai API Server
+  kai-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kai-api
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=mistral:latest
+      - PORT=8001
+      - HOST=0.0.0.0
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./kai_data:/app/.kai
+      - ./projects:/app/.kai/projects
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: python -u kai_api.py
+
+volumes:
+  ollama_data:
+
+networks:
+  default:
+    name: kai-network

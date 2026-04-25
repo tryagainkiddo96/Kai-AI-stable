@@ -1,0 +1,69 @@
+# ============================================================================
+# KAI AI — Core Dependencies
+# ============================================================================
+
+# API Server
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
+pydantic==2.5.0
+
+# WebSocket & Async
+websockets==12.0
+aiohttp==3.9.1
+
+# HTTP Requests
+requests==2.31.0
+
+# Web Automation (Playwright — browser tools currently stubbed)
+# playwright==1.40.0
+# Note: Playwright requires Node.js and system dependencies.
+# Install manually with: playwright install chromium
+# Browser tools are currently disabled (stub in kai_agent/browser_tools.py)
+
+# Docker integration
+docker==7.0.0
+
+# Terminal UI Dashboard
+rich>=13.0.0
+
+# ============================================================================
+# KAI AI — Optional Capabilities
+# ============================================================================
+
+# Computer Vision (webcam, motion detection, face detection)
+# Install for vision capabilities: pip install opencv-python pillow
+# opencv-python==4.8.1.78
+# Pillow==10.1.0
+
+# Speech-to-Text
+# Install for voice input: pip install sounddevice numpy faster-whisper
+# sounddevice==0.4.6
+# numpy==1.26.2
+# faster-whisper==0.10.0
+# vosk==0.3.45          # Lightweight offline alternative
+# soundfile==0.12.1     # Audio file I/O
+# scipy==1.11.4         # Audio resampling
+
+# Text-to-Speech
+# Install for voice output: pip install pyttsx3
+# pyttsx3==2.90
+
+# ============================================================================
+# KAI AI — Development & Testing
+# ============================================================================
+
+pytest==7.4.3
+pytest-asyncio==0.21.1
+httpx==0.25.2           # For testing FastAPI endpoints
+
+# ============================================================================
+# KAI AI — Additional Integrations (uncomment as needed)
+# ============================================================================
+
+# flask==3.0.0          # For claude_bridge.py webhook server
+# beautifulsoup4==4.12.2 # For advanced web scraping
+# lxml==4.9.3           # For beautifulsoup4 parser
+# tavily-python==0.3.0  # For Tavily client (currently uses stdlib urllib)
+# psutil==5.9.6         # For system monitoring
+# pywin32==306          # For Windows-specific integrations
