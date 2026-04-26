@@ -1,3 +1,4 @@
+# filename: ollama_client.py
 import json
 import os
 import socket
@@ -31,7 +32,6 @@ class OllamaClient:
             os.environ.get("HF_API_KEY", "").strip()
             or os.environ.get("HUGGINGFACE_API_KEY", "").strip()
             or os.environ.get("HUGGINGFACE_HUB_TOKEN", "").strip()
-        )
         )
         self.hf_base_url = os.environ.get("HF_API_URL", "https://api-inference.huggingface.co").rstrip("/")
         # DeepSeek config — env var first, then local kai_config.json, then empty
@@ -197,9 +197,7 @@ class OllamaClient:
             )
         prompt = self._hf_format_prompt(messages)
 
-        # Try multiple endpoint strategies
         strategies = [
-            # 1. TGI OpenAI-compatible chat completions
             (
                 f"{self.hf_base_url}/models/{self.model}/v1/chat/completions",
                 json.dumps({
@@ -211,7 +209,6 @@ class OllamaClient:
                 }).encode("utf-8"),
                 "tgi",
             ),
-            # 2. Serverless Inference API (direct model)
             (
                 f"{self.hf_base_url}/models/{self.model}",
                 json.dumps({
@@ -224,7 +221,6 @@ class OllamaClient:
                 }).encode("utf-8"),
                 "serverless",
             ),
-            # 3. Pipeline API (older format for text-generation)
             (
                 f"{self.hf_base_url}/pipeline/text-generation/{self.model}",
                 json.dumps({
@@ -271,7 +267,7 @@ class OllamaClient:
 
             except error.HTTPError as exc:
                 if exc.code == 404:
-                    continue  # Try next strategy
+                    continue
                 detail = ""
                 try:
                     detail = exc.read().decode("utf-8").strip()
@@ -296,7 +292,6 @@ class OllamaClient:
                     f"Hugging Face request timed out after {timeout}s for model `{self.model}`"
                 ) from exc
 
-        # All strategies exhausted
         raise RuntimeError(
             f"Hugging Face model `{self.model}` is not available on the free Inference API. "
             f"Model may require a Pro subscription, be gated, or the ID may be incorrect. "
@@ -384,7 +379,6 @@ class OllamaClient:
         if model:
             self.model = model
         else:
-            # Set sensible default model when switching providers if current model looks wrong
             if self.provider == "huggingface" and "/" not in self.model:
                 self.model = "microsoft/Phi-3-mini-4k-instruct"
             elif self.provider == "deepseek" and not self.model.startswith("deepseek-"):
@@ -429,4 +423,3 @@ class OllamaClient:
         except error.URLError as exc:
             raise RuntimeError("Ollama is not reachable on " + self.base_url) from exc
         return data
-
