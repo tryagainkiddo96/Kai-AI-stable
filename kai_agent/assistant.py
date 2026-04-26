@@ -1013,6 +1013,85 @@ class KaiAssistant:
             return self._build_action_preview(tool_context)
         return ""
 
+    def _try_natural_language_command(self, user_input: str) -> str | None:
+        """Parse natural language for provider/model switching and other meta-commands.
+        
+        Returns a response string if handled, None if not a natural language command.
+        """
+        lowered = user_input.lower().strip()
+        
+        # Provider switching patterns
+        provider_patterns = [
+            # "switch to deepseek", "switch model to deepseek", "use deepseek"
+            r"(?:kai\s+)?(?:switch\s+(?:to|model\s+(?:to|over\s+to))\s+|use\s+|change\s+(?:provider\s+)?to\s+|set\s+provider\s+(?:to\s+)?)(ollama|huggingface|hf|deepseek|codex|openai)(?:\s+model)?(?:\s+(\S+))?",
+            # "set model to deepseek-chat", "change model to llama3.2"
+            r"(?:kai\s+)?(?:set|change|switch)\s+model\s+(?:to\s+)?(\S+)",
+            # "use model llama3.2 on ollama"
+            r"(?:kai\s+)?use\s+model\s+(\S+)(?:\s+on\s+(ollama|huggingface|hf|deepseek|codex|openai))?",
+        ]
+        
+        for pattern in provider_patterns:
+            match = re.search(pattern, lowered)
+            if match:
+                groups = [g for g in match.groups() if g]
+                if not groups:
+                    continue
+                    
+                # Determine provider and model from capture groups
+                provider = None
+                model = None
+                
+                for g in groups:
+                    g_lower = g.lower()
+                    if g_lower in {"ollama", "huggingface", "hf", "deepseek", "codex", "openai", "openai-codex"}:
+                        provider = g_lower
+                    else:
+                        # Assume it's a model name
+                        model = g
+                
+                # If only model was specified, try to infer provider
+                if model and not provider:
+                    model_lower = model.lower()
+                    if model_lower.startswith("deepseek-"):
+                        provider = "deepseek"
+                    elif "/" in model_lower:
+                        provider = "huggingface"
+                    elif model_lower.startswith("gpt-") or model_lower.startswith("codex-"):
+                        provider = "codex"
+                    else:
+                        provider = "ollama"
+                
+                # If only provider was specified, use default model
+                if provider and not model:
+                    result = self.client.set_provider(provider)
+                    return result
+                
+                if provider and model:
+                    result = self.client.set_provider(provider, model)
+                    return result
+        
+        # "what provider are we using?", "what model is active?"
+        if re.search(r"(?:what|which)\s+(?:provider|model)\s+(?:are we using|is active|are you using|is running|now)\??", lowered):
+            return f"Current provider: {self.client.provider}\nCurrent model: {self.client.model}"
+        
+        # "list available models", "what models do I have?"
+        if re.search(r"(?:list|show|what)\s+(?:available\s+)?models|what\s+models\s+(?:do\s+i\s+have|are\s+(?:available|installed))", lowered):
+            try:
+                models = self.client.list_models(timeout=5)
+                if models:
+                    lines = [f"Available models ({len(models)}):"]
+                    for m in models[:20]:
+                        marker = " ← current" if m == self.client.model else ""
+                        lines.append(f"  • {m}{marker}")
+                    if len(models) > 20:
+                        lines.append(f"  ... and {len(models) - 20} more")
+                    return "\n".join(lines)
+                return "No models found. Make sure Ollama is running or your cloud provider is configured."
+            except Exception as exc:
+                return f"Could not list models: {exc}"
+        
+        return None
+
     def _looks_like_direct_action(self, user_input: str) -> bool:
         lowered = user_input.lower()
         return any(
@@ -2289,6 +2368,12 @@ async def repl(model: str, workspace: Path) -> None:
             shell_echo("  /model llama3.2:3b")
             shell_echo("  /model deepseek-r1:1.5b")
             shell_echo("  /model microsoft/Phi-3-mini-4k-instruct")
+            continue
+
+        # Check for natural language meta-commands (provider switching, etc.)
+        nl_response = assistant._try_natural_language_command(user_input)
+        if nl_response is not None:
+            kai_echo(f"[KAI] {nl_response}")
             continue
 
         try:
