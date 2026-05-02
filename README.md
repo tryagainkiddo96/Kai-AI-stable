@@ -46,7 +46,7 @@ python kai_agent/kai_control_panel_run.py
 - macOS: use the macOS .command launcher scripts (scripts/launch_kai_control_center.command) or run the Bash launcher in scripts/launch_kai_control_center.sh
 - Linux: run the Bash launcher at scripts/launch_kai_control_center.sh
 
-5) Interacting with Kai
+-5) Interacting with Kai
 - Use the in-panel chat to ask questions or instruct Kai.
 - Use the quick-action commands (1 Hunt Demo, 2 Watch Chess, 3 Ready Check, 4 Demo, 5 Memory, 6 Provider, 7 Autonomy) or type natural language in the chat surface.
 
@@ -59,4 +59,7 @@ Troubleshooting
 - Check dependencies: Python 3.x and pip installed, env vars set as needed.
 
 Contributing
+- macOS Setup (Post-Clone)
+- This repo now includes a macOS post-clone setup script to bootstrap Kai on macOS. See scripts/post_clone_setup_mac.sh.
+
 - This is a lean MVP. If you want to extend with more widgets, panels, or actions, follow the existing file structure and add adapters that map to Kai’s existing entry points.
