@@ -124,6 +124,7 @@ class WebAIBridge:
             "Web AI bridge requires full Playwright browser integration.\n"
             "For now, use these API providers instead:\n"
             "  /provider ollama <model>     — local Ollama models\n"
+            "  /provider groq <model>       — GROQ API (needs GROQ_API_KEY)\n"
             "  /provider deepseek <model>   — DeepSeek API (needs DEEPSEEK_API_KEY)\n"
             "  /provider hf <model>         — Hugging Face Inference API"
         )
@@ -151,4 +152,3 @@ def web_ai_chat(messages: list[dict], service: str = "deepseek", timeout: int = 
 
     with WebAIBridge(service=service) as bridge:
         return bridge.ask(prompt)
-

@@ -1,27 +1,28 @@
-$ErrorActionPreference = "Continue"
-$RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$ErrorActionPreference = "Stop"
+$RepoRoot = "C:\Users\7nujy6xc\OneDrive\Desktop\Kai-AI"
 
 cd $RepoRoot
 
-if (Test-Path ".venv\Scripts\Activate.ps1") {
-    & ".venv\Scripts\Activate.ps1"
-}
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "         KAI AI COMPANION" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
 
-Write-Host "Starting Kai AI Companion..." -ForegroundColor Cyan
+$env:PYTHONPATH = "$RepoRoot;$RepoRoot\kai_agent"
 
-# Fix for broken python paths
-$env:PYTHONPATH = $RepoRoot
 
 $arguments = $args -join ' '
 
 try {
-    if ($arguments) {
-        python launch_kai_pentester.py $arguments
+    if ($arguments -ne "") {
+        python scripts/launch_kai_pentester.py $arguments
     } else {
-        python launch_kai_pentester.py
+        python kai_agent/kai_dashboard.py
     }
+} catch {
+    Write-Host "Error: $_" -ForegroundColor Red
 }
-catch {
-    Write-Host "Kai exited with error: $_" -ForegroundColor Red
-    Start-Sleep 5
-}
+Write-Host ""
+Write-Host "Press any key to exit..."
+$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

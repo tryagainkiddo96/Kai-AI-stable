@@ -45,10 +45,14 @@ class TestInstantiation:
 
 
 class TestAskMethod:
-    def test_ask_returns_response(self, assistant):
+    @patch("kai_agent.assistant.KaiAssistant._maybe_short_circuit_tool_result", return_value=None)
+    @patch("kai_agent.smart_router.SmartRouter.route", return_value={"handler": "llm"})
+    def test_ask_returns_response(self, mock_router_route, mock_short_circuit, assistant):
         reply = asyncio.run(assistant.ask("Hello Kai"))
         assert reply == "Mocked Kai response"
         assistant.client.chat.assert_called_once()
+        mock_short_circuit.assert_called_once()
+        mock_router_route.assert_called_once()
 
     def test_ask_updates_history(self, assistant):
         initial_len = len(assistant.history)

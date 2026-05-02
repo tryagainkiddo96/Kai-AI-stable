@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import shlex
 import subprocess
@@ -10,14 +11,41 @@ import time
 import uuid
 from queue import Empty, Queue
 from pathlib import Path
+import pyautogui
 
 from kai_agent.browser_tools import BrowserTools
 from kai_agent.document_handler import DocumentHandler
 from kai_agent.tavily_client import TavilyClient
 from kai_agent.tool_policy import ToolPolicy
+from kai_agent.anonymity_stack import AnonymityStack
 
 
-TESSERACT_PATH = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+
+def _load_config_key(key: str) -> str:
+    config_path = Path("kai_config.json")
+    if config_path.exists():
+        try:
+            with config_path.open("r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            value = str(cfg.get(key, "")).strip()
+            if value:
+                return value
+        except Exception:
+            pass
+    return ""
+
+# Cross-platform Tesseract path
+tesseract_path_from_config = _load_config_key("tesseract_path")
+if tesseract_path_from_config:
+    TESSERACT_PATH = Path(tesseract_path_from_config)
+elif platform.system() == "Windows":
+    TESSERACT_PATH = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+else:
+    # Linux/WSL paths
+    TESSERACT_PATH = Path("/usr/bin/tesseract")
+    if not TESSERACT_PATH.exists():
+        TESSERACT_PATH = Path("/usr/local/bin/tesseract")
+
 SUBPROCESS_TEXT_KWARGS = {
     "text": True,
     "encoding": "utf-8",
@@ -26,7 +54,7 @@ SUBPROCESS_TEXT_KWARGS = {
 
 
 class DesktopTools:
-    def __init__(self, workspace: Path) -> None:
+    def __init__(self, workspace: Path, chimera=None) -> None:
         self.workspace = workspace
         self.tmp_dir = workspace / "tmp"
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -34,9 +62,18 @@ class DesktopTools:
         self.kali_queue: Queue[str] = Queue()
         self.kali_reader_thread: threading.Thread | None = None
         self.kali_lock = threading.Lock()
+        self.chimera = chimera
+        
+        # OS detection
+        self.is_windows = platform.system() == "Windows"
+        self.is_linux = platform.system() == "Linux"
+        self.shell_cmd = "powershell" if self.is_windows else "bash"
+        self.shell_flag = "-Command" if self.is_windows else "-c"
+
         self.kali_session_cwd = self._to_wsl_path(self.workspace)
         self.tavily = TavilyClient()
-        self.browser = BrowserTools(workspace)
+        self.anonymity = AnonymityStack(workspace)
+        self.browser = BrowserTools(workspace, chimera=chimera, anonymity=self.anonymity)
         self.documents = DocumentHandler(workspace)
         self.policy = ToolPolicy(workspace)
 
@@ -152,13 +189,20 @@ class DesktopTools:
         return json.dumps(payload, indent=2)
 
     def run_shell(self, command: str, timeout: int = 30) -> str:
-        meta = self.classify_command(command, shell="powershell")
+        meta = self.classify_command(command, shell=self.shell_cmd)
         blocked = self._policy_block("run_shell", timeout=timeout, **meta)
         if blocked:
             return blocked
+        
+        # Cross-platform shell execution
+        if self.is_windows:
+            shell_args = ["powershell", "-NoProfile", "-Command", command]
+        else:
+            shell_args = ["bash", "-c", command]
+            
         try:
             completed = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", command],
+                shell_args,
                 cwd=str(self.workspace),
                 capture_output=True,
                 timeout=timeout,
@@ -200,43 +244,85 @@ class DesktopTools:
         blocked = self._policy_block("run_wsl", timeout=timeout, distro=distro, **meta)
         if blocked:
             return blocked
-        try:
-            completed = subprocess.run(
-                ["wsl.exe", "-d", distro, "--", "bash", "-lc", command],
-                cwd=str(self.workspace),
-                capture_output=True,
-                timeout=timeout,
-                **SUBPROCESS_TEXT_KWARGS,
-            )
-            payload = {
-                "action": "run_wsl",
-                "command": command,
-                "distro": distro,
-                "returncode": completed.returncode,
-                "stdout": completed.stdout.strip()[:8000],
-                "stderr": completed.stderr.strip()[:4000],
-                **meta,
-            }
-        except subprocess.TimeoutExpired:
-            payload = {
-                "action": "run_wsl",
-                "command": command,
-                "distro": distro,
-                "returncode": -1,
-                "stdout": "",
-                "stderr": f"WSL command timed out after {timeout}s",
-                **meta,
-            }
-        except Exception as exc:
-            payload = {
-                "action": "run_wsl",
-                "command": command,
-                "distro": distro,
-                "returncode": -1,
-                "stdout": "",
-                "stderr": f"WSL command failed: {exc}",
-                **meta,
-            }
+        
+        # In WSL, just run bash directly instead of nested wsl.exe
+        if self.is_linux:
+            try:
+                completed = subprocess.run(
+                    ["bash", "-lc", command],
+                    cwd=str(self.workspace),
+                    capture_output=True,
+                    timeout=timeout,
+                    **SUBPROCESS_TEXT_KWARGS,
+                )
+                payload = {
+                    "action": "run_wsl",
+                    "command": command,
+                    "distro": distro,
+                    "returncode": completed.returncode,
+                    "stdout": completed.stdout.strip()[:8000],
+                    "stderr": completed.stderr.strip()[:4000],
+                    **meta,
+                }
+            except subprocess.TimeoutExpired:
+                payload = {
+                    "action": "run_wsl",
+                    "command": command,
+                    "distro": distro,
+                    "returncode": -1,
+                    "stdout": "",
+                    "stderr": f"WSL command timed out after {timeout}s",
+                    **meta,
+                }
+            except Exception as exc:
+                payload = {
+                    "action": "run_wsl",
+                    "command": command,
+                    "distro": distro,
+                    "returncode": -1,
+                    "stdout": "",
+                    "stderr": f"WSL command failed: {exc}",
+                    **meta,
+                }
+        else:
+            # Windows: use wsl.exe
+            try:
+                completed = subprocess.run(
+                    ["wsl.exe", "-d", distro, "--", "bash", "-lc", command],
+                    cwd=str(self.workspace),
+                    capture_output=True,
+                    timeout=timeout,
+                    **SUBPROCESS_TEXT_KWARGS,
+                )
+                payload = {
+                    "action": "run_wsl",
+                    "command": command,
+                    "distro": distro,
+                    "returncode": completed.returncode,
+                    "stdout": completed.stdout.strip()[:8000],
+                    "stderr": completed.stderr.strip()[:4000],
+                    **meta,
+                }
+            except subprocess.TimeoutExpired:
+                payload = {
+                    "action": "run_wsl",
+                    "command": command,
+                    "distro": distro,
+                    "returncode": -1,
+                    "stdout": "",
+                    "stderr": f"WSL command timed out after {timeout}s",
+                    **meta,
+                }
+            except Exception as exc:
+                payload = {
+                    "action": "run_wsl",
+                    "command": command,
+                    "distro": distro,
+                    "returncode": -1,
+                    "stdout": "",
+                    "stderr": f"WSL command failed: {exc}",
+                    **meta,
+                }
         self.policy.record("run_wsl", payload, {"allowed": True, "policy_mode": self.policy.status()["mode"], "policy_reason": "Executed through policy-approved WSL path."})
         return json.dumps(payload, indent=2)
 
@@ -251,14 +337,25 @@ class DesktopTools:
         if self.kali_process and self.kali_process.poll() is None:
             return
 
-        self.kali_process = subprocess.Popen(
-            ["wsl.exe", "-d", "kali-linux", "--", "bash", "--noprofile", "--norc"],
-            cwd=str(self.workspace),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            bufsize=0,
-        )
+        # In WSL, run bash directly
+        if self.is_linux:
+            self.kali_process = subprocess.Popen(
+                ["bash", "--noprofile", "--norc"],
+                cwd=str(self.workspace),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+            )
+        else:
+            self.kali_process = subprocess.Popen(
+                ["wsl.exe", "-d", "kali-linux", "--", "bash", "--noprofile", "--norc"],
+                cwd=str(self.workspace),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+            )
         self.kali_queue = Queue()
         self.kali_reader_thread = threading.Thread(target=self._kali_reader, daemon=True)
         self.kali_reader_thread.start()
@@ -438,7 +535,10 @@ class DesktopTools:
 
     def ask_kali_helper(self, prompt: str, use_web: bool = False) -> str:
         kai_cmd = "/home/tryagain/.local/bin/kai"
-        args = ["wsl.exe", "-d", "kali-linux", "--", kai_cmd]
+        if self.is_linux:
+            args = [kai_cmd]
+        else:
+            args = ["wsl.exe", "-d", "kali-linux", "--", kai_cmd]
         if use_web:
             args.append("--web")
         args.append(prompt)
@@ -489,8 +589,8 @@ class DesktopTools:
         candidates = {
             "git": ["git", "--version"],
             "node": ["node", "--version"],
-            "npm": ["npm.cmd", "--version"],
-            "python": ["python", "--version"],
+            "npm": ["npm", "--version"] if self.is_linux else ["npm.cmd", "--version"],
+            "python": ["python3", "--version"] if self.is_linux else ["python", "--version"],
             "tesseract": [str(TESSERACT_PATH), "--version"],
         }
         if command in candidates:
@@ -498,13 +598,22 @@ class DesktopTools:
             if check["returncode"] == 0:
                 return True, f"{command} already available."
 
-        installers = {
-            "git": ["winget", "install", "--id", "Git.Git", "--exact", "--accept-package-agreements", "--accept-source-agreements"],
-            "node": ["winget", "install", "--id", "OpenJS.NodeJS", "--exact", "--accept-package-agreements", "--accept-source-agreements"],
-            "npm": ["winget", "install", "--id", "OpenJS.NodeJS", "--exact", "--accept-package-agreements", "--accept-source-agreements"],
-            "python": ["winget", "install", "--id", "Python.Python.3.12", "--exact", "--accept-package-agreements", "--accept-source-agreements"],
-            "tesseract": ["winget", "install", "--id", "UB-Mannheim.TesseractOCR", "--exact", "--accept-package-agreements", "--accept-source-agreements"],
-        }
+        if self.is_linux:
+            installers = {
+                "git": ["sudo", "apt", "install", "-y", "git"],
+                "node": ["sudo", "apt", "install", "-y", "nodejs", "npm"],
+                "npm": ["sudo", "apt", "install", "-y", "nodejs", "npm"],
+                "python": ["sudo", "apt", "install", "-y", "python3", "python3-pip"],
+                "tesseract": ["sudo", "apt", "install", "-y", "tesseract-ocr"],
+            }
+        else:
+            installers = {
+                "git": ["winget", "install", "--id", "Git.Git", "--exact", "--accept-package-agreements", "--accept-source-agreements"],
+                "node": ["winget", "install", "--id", "OpenJS.NodeJS", "--exact", "--accept-package-agreements", "--accept-source-agreements"],
+                "npm": ["winget", "install", "--id", "OpenJS.NodeJS", "--exact", "--accept-package-agreements", "--accept-source-agreements"],
+                "python": ["winget", "install", "--id", "Python.Python.3.12", "--exact", "--accept-package-agreements", "--accept-source-agreements"],
+                "tesseract": ["winget", "install", "--id", "UB-Mannheim.TesseractOCR", "--exact", "--accept-package-agreements", "--accept-source-agreements"],
+            }
         install_args = installers.get(command)
         if not install_args:
             return False, f"No automatic installer is configured for {command}."
@@ -523,6 +632,9 @@ class DesktopTools:
 
     def _to_wsl_path(self, path: Path) -> str:
         path = path.resolve()
+        if self.is_linux:
+            # Already in Linux, return normal path
+            return str(path)
         drive = path.drive.rstrip(":").lower()
         parts = [part for part in path.parts[1:] if part not in (path.drive, "\\", "/")]
         joined = "/".join(parts)
@@ -536,7 +648,10 @@ class DesktopTools:
         if not target.exists():
             return json.dumps({"action": "open_path", "ok": False, "error": f"Path not found: {target}"}, indent=2)
         try:
-            os.startfile(str(target))  # type: ignore[attr-defined]
+            if self.is_windows:
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            else:
+                subprocess.run(["xdg-open", str(target)], check=True, capture_output=True)
             return json.dumps({"action": "open_path", "ok": True, "path": str(target)}, indent=2)
         except Exception as exc:
             return json.dumps({"action": "open_path", "ok": False, "path": str(target), "error": str(exc)}, indent=2)
@@ -625,10 +740,17 @@ class DesktopTools:
         if blocked:
             return blocked
         target_dir.mkdir(parents=True, exist_ok=True)
-        result = self._run_native(
-            ["powershell", "-NoProfile", "-Command", f"Expand-Archive -LiteralPath '{archive}' -DestinationPath '{target_dir}' -Force"],
-            timeout=600,
-        )
+        
+        if self.is_linux:
+            result = self._run_native(
+                ["unzip", "-o", str(archive), "-d", str(target_dir)],
+                timeout=600,
+            )
+        else:
+            result = self._run_native(
+                ["powershell", "-NoProfile", "-Command", f"Expand-Archive -LiteralPath '{archive}' -DestinationPath '{target_dir}' -Force"],
+                timeout=600,
+            )
         payload = {"action": "extract_zip", "archive": str(archive), "destination": str(target_dir), **result}
         payload["ok"] = result["returncode"] == 0
         return json.dumps(payload, indent=2)
@@ -659,17 +781,17 @@ class DesktopTools:
             ok, msg = self._ensure_command("npm")
             steps.append({"tool": "npm", "setup": msg})
             if ok:
-                steps.append(self._run_native(["npm.cmd", "install"], cwd=target, timeout=1800))
+                steps.append(self._run_native(["npm", "install"], cwd=target, timeout=1800))
         if (target / "requirements.txt").exists():
             ok, msg = self._ensure_command("python")
             steps.append({"tool": "python", "setup": msg})
             if ok:
-                steps.append(self._run_native(["python", "-m", "pip", "install", "-r", "requirements.txt"], cwd=target, timeout=1800))
+                steps.append(self._run_native(["python3", "-m", "pip", "install", "-r", "requirements.txt"], cwd=target, timeout=1800))
         if (target / "pyproject.toml").exists() and not (target / "requirements.txt").exists():
             ok, msg = self._ensure_command("python")
             steps.append({"tool": "python", "setup": msg})
             if ok:
-                steps.append(self._run_native(["python", "-m", "pip", "install", "-e", "."], cwd=target, timeout=1800))
+                steps.append(self._run_native(["python3", "-m", "pip", "install", "-e", "."], cwd=target, timeout=1800))
 
         if not steps:
             return json.dumps(
@@ -703,55 +825,38 @@ class DesktopTools:
                 for candidate in (latest_launcher, widget_launcher, panel_launcher, stack_launcher)
                 if candidate.exists()
             )
-            result = self._run_native(
-                ["powershell", "-NoProfile", "-Command", f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','{launcher}'"],
-                timeout=60,
-            )
-            payload = {"action": "run_project", "path": str(target), "runner": str(launcher), **result}
-            payload["ok"] = result["returncode"] == 0
-            return json.dumps(payload, indent=2)
-
-        if (target / "package.json").exists():
-            ok, msg = self._ensure_command("npm")
-            if not ok:
-                return json.dumps({"action": "run_project", "ok": False, "path": str(target), "error": msg}, indent=2)
-
-            package_text = (target / "package.json").read_text(encoding="utf-8", errors="replace")
-            script = "dev" if '"dev"' in package_text else "start" if '"start"' in package_text else None
-            if not script:
-                return json.dumps(
-                    {"action": "run_project", "ok": False, "path": str(target), "error": "No npm dev/start script found."},
-                    indent=2,
-                )
-            result = self._run_native(
-                ["powershell", "-NoProfile", "-Command", f"Start-Process powershell -ArgumentList '-NoExit','-Command','cd \"{target}\"; npm.cmd run {script}'"],
-                timeout=60,
-            )
-            payload = {"action": "run_project", "path": str(target), "runner": f"npm run {script}", **result}
-            payload["ok"] = result["returncode"] == 0
-            return json.dumps(payload, indent=2)
-
-        for candidate in ("main.py", "app.py"):
-            file_path = target / candidate
-            if file_path.exists():
-                ok, msg = self._ensure_command("python")
-                if not ok:
-                    return json.dumps({"action": "run_project", "ok": False, "path": str(target), "error": msg}, indent=2)
+            if self.is_linux:
                 result = self._run_native(
-                    ["powershell", "-NoProfile", "-Command", f"Start-Process powershell -ArgumentList '-NoExit','-Command','cd \"{target}\"; python \"{candidate}\"'"],
+                    ["bash", str(launcher)],
                     timeout=60,
                 )
-                payload = {"action": "run_project", "path": str(target), "runner": f"python {candidate}", **result}
-                payload["ok"] = result["returncode"] == 0
-                return json.dumps(payload, indent=2)
+            else:
+                # Use a more robust method for launching a new terminal process
+                # This avoids complex string escaping and is more secure.
+                # The command to be executed in the new terminal
+                inner_command = f"cd '{target}'; python '{file_path}'"
+                
+                # Arguments for Start-Process
+                start_process_args = [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Start-Process",
+                    "powershell",
+                    "-ArgumentList",
+                    f"-NoExit, -Command, \"{inner_command}\""
+                ]
+                
+                result = self._run_native(
+                    start_process_args,
+                    timeout=60,
+                )
+            payload = {"action": "run_project", "path": str(target), "runner": f"python {file_path}", **result}
+            payload["ok"] = result["returncode"] == 0
+            return json.dumps(payload, indent=2)
 
         return json.dumps(
-            {
-                "action": "run_project",
-                "ok": False,
-                "path": str(target),
-                "error": "No supported runnable entrypoint found. I looked for package.json scripts and main.py/app.py.",
-            },
+            {"action": "run_project", "ok": False, "path": str(target), "error": "No supported project entrypoint found."},
             indent=2,
         )
 
@@ -761,294 +866,324 @@ class DesktopTools:
         if blocked:
             return blocked
         if not target.exists():
-            return json.dumps({"action": "run_tests", "ok": False, "error": f"Project path not found: {target}"}, indent=2)
+            return json.dumps({"action": "run_tests", "ok": False, "error": f"Path not found: {target}"}, indent=2)
 
         if (target / "package.json").exists():
             ok, msg = self._ensure_command("npm")
             if not ok:
-                return json.dumps({"action": "run_tests", "ok": False, "path": str(target), "error": msg}, indent=2)
-            package_text = (target / "package.json").read_text(encoding="utf-8", errors="replace")
-            if '"test"' not in package_text:
-                return json.dumps({"action": "run_tests", "ok": False, "path": str(target), "error": "No npm test script found."}, indent=2)
-            result = self._run_native(["npm.cmd", "test", "--", "--runInBand"], cwd=target, timeout=1800)
+                return json.dumps({"action": "run_tests", "ok": False, "error": msg}, indent=2)
+            result = self._run_native(["npm", "test"], cwd=target, timeout=600)
             payload = {"action": "run_tests", "path": str(target), "runner": "npm test", **result}
             payload["ok"] = result["returncode"] == 0
             return json.dumps(payload, indent=2)
 
-        if (target / "pytest.ini").exists() or (target / "pyproject.toml").exists() or any(target.glob("test_*.py")) or (target / "tests").exists():
-            ok, msg = self._ensure_command("python")
-            if not ok:
-                return json.dumps({"action": "run_tests", "ok": False, "path": str(target), "error": msg}, indent=2)
-            result = self._run_native(["python", "-m", "pytest"], cwd=target, timeout=1800)
-            payload = {"action": "run_tests", "path": str(target), "runner": "python -m pytest", **result}
-            payload["ok"] = result["returncode"] == 0
-            return json.dumps(payload, indent=2)
+        for candidate in ("pytest", "python -m pytest", "python3 -m pytest"):
+            if self.is_linux:
+                check = self._run_native(["bash", "-c", f"command -v {candidate.split()[0]}"], timeout=10)
+            else:
+                check = self._run_native(["powershell", "-Command", f"Get-Command {candidate.split()[0]}"], timeout=10)
+            if check["returncode"] == 0:
+                if self.is_linux:
+                    result = self._run_native(["bash", "-c", f"cd {target} && {candidate}"], timeout=600)
+                else:
+                    result = self._run_native(["powershell", "-Command", f"cd {target}; {candidate}"], timeout=600)
+                payload = {"action": "run_tests", "path": str(target), "runner": candidate, **result}
+                payload["ok"] = result["returncode"] == 0
+                return json.dumps(payload, indent=2)
 
         return json.dumps(
-            {
-                "action": "run_tests",
-                "ok": False,
-                "path": str(target),
-                "error": "No supported test entrypoint found. I looked for npm test and pytest-style layouts.",
-            },
+            {"action": "run_tests", "ok": False, "path": str(target), "error": "No supported test runner found."},
             indent=2,
         )
 
-    def setup_github_project(self, repo_url: str, destination: str | None = None) -> str:
-        clone_data = json.loads(self.clone_repo(repo_url=repo_url, destination=destination))
-        if not clone_data.get("ok"):
-            return json.dumps({"action": "setup_github_project", "ok": False, "clone": clone_data}, indent=2)
-        install_data = json.loads(self.install_project(clone_data["destination"]))
-        return json.dumps(
-            {
-                "action": "setup_github_project",
-                "ok": bool(clone_data.get("ok") and install_data.get("ok")),
-                "clone": clone_data,
-                "install": install_data,
-            },
-            indent=2,
-        )
-
-    def codex_edit(self, instruction: str, target_path: str | None = None) -> str:
-        target = self._resolve_path(target_path) if target_path else self.workspace
-        blocked = self._policy_block("codex_edit", target=target, instruction=instruction[:240])
+    def setup_github_project(self, repo_url: str) -> str:
+        blocked = self._policy_block("setup_github_project", repo_url=repo_url)
         if blocked:
             return blocked
-        if not target.exists():
-            return json.dumps({"action": "codex_edit", "ok": False, "error": f"Target path not found: {target}"}, indent=2)
-
-        output_path = self.tmp_dir / "kai_codex_last_message.txt"
-        wsl_target = self._to_wsl_path(target if target.is_dir() else target.parent)
-        prompt = (
-            "You are editing code for Kai's local operator workspace. "
-            "Make the requested changes directly in files. Keep changes focused. "
-            "At the end, provide a short summary and a flat list of changed file paths.\n\n"
-            f"Task:\n{instruction}\n"
-        )
-        command = (
-            f"cd '{wsl_target}' && "
-            f"codex exec --skip-git-repo-check --sandbox workspace-write "
-            f"--output-last-message '/mnt/c/{self._to_wsl_path(output_path).split('/mnt/c/',1)[1]}' "
-            f"\"{prompt.replace(chr(34), chr(92) + chr(34))}\""
-        )
-        result = self.run_wsl(command, timeout=1800)
-        payload = json.loads(result)
-        summary = ""
-        try:
-            if output_path.exists():
-                summary = output_path.read_text(encoding="utf-8", errors="replace").strip()
-        except Exception:
-            summary = ""
-        payload.update(
-            {
-                "action": "codex_edit",
-                "ok": payload.get("returncode") == 0,
-                "target": str(target),
-                "summary": summary,
-            }
-        )
+        clone_result = json.loads(self.clone_repo(repo_url))
+        if not clone_result.get("ok"):
+            return json.dumps({"action": "setup_github_project", "ok": False, "error": clone_result.get("error", "Clone failed.")}, indent=2)
+        target = Path(clone_result["destination"])
+        install_result = json.loads(self.install_project(str(target)))
+        payload = {
+            "action": "setup_github_project",
+            "ok": install_result.get("ok", False),
+            "repo_url": repo_url,
+            "destination": str(target),
+            "clone": clone_result,
+            "install": install_result,
+        }
         return json.dumps(payload, indent=2)
 
-    def codex_edit_and_test(self, instruction: str, target_path: str | None = None) -> str:
-        target = self._resolve_path(target_path) if target_path else self.workspace
-        blocked = self._policy_block("codex_edit_and_test", target=target, instruction=instruction[:240])
+    def codex_edit(self, instruction: str) -> str:
+        blocked = self._policy_block("codex_edit", instruction=instruction)
         if blocked:
             return blocked
-        edit_data = json.loads(self.codex_edit(instruction=instruction, target_path=target_path))
-        target = target_path or str(self.workspace)
-        if not edit_data.get("ok"):
-            return json.dumps({"action": "codex_edit_and_test", "ok": False, "edit": edit_data}, indent=2)
-        test_data = json.loads(self.run_tests(target))
-        return json.dumps(
-            {
-                "action": "codex_edit_and_test",
-                "ok": bool(edit_data.get("ok") and test_data.get("ok")),
-                "edit": edit_data,
-                "tests": test_data,
-            },
-            indent=2,
-        )
+        ok, msg = self._ensure_command("python")
+        if not ok:
+            return json.dumps({"action": "codex_edit", "ok": False, "error": msg}, indent=2)
+        if self.is_linux:
+            result = self._run_native(["python3", "-m", "codex", "edit", instruction], timeout=300)
+        else:
+            result = self._run_native(["powershell", "-Command", f"codex edit '{instruction}'"], timeout=300)
+        payload = {"action": "codex_edit", "instruction": instruction, **result}
+        payload["ok"] = result["returncode"] == 0
+        return json.dumps(payload, indent=2)
+
+    def codex_edit_and_test(self, instruction: str) -> str:
+        blocked = self._policy_block("codex_edit_and_test", instruction=instruction)
+        if blocked:
+            return blocked
+        edit_result = json.loads(self.codex_edit(instruction))
+        if not edit_result.get("ok"):
+            return json.dumps({"action": "codex_edit_and_test", "ok": False, "edit": edit_result}, indent=2)
+        test_result = json.loads(self.run_tests(str(self.workspace)))
+        payload = {"action": "codex_edit_and_test", "ok": test_result.get("ok", False), "edit": edit_result, "test": test_result}
+        return json.dumps(payload, indent=2)
 
     def read_file(self, path: str, max_chars: int = 8000) -> str:
-        target = Path(path)
-        if not target.is_absolute():
-            target = (self.workspace / target).resolve()
+        target = self._resolve_path(path)
         if not target.exists():
-            return f"File not found: {target}"
-        if target.is_dir():
-            return f"Path is a directory: {target}"
+            return f"[Error: File not found: {target}]"
         try:
-            return target.read_text(encoding="utf-8", errors="replace")[:max_chars]
+            content = target.read_text(encoding="utf-8", errors="replace")
+            if len(content) > max_chars:
+                content = content[:max_chars] + "\n[...truncated...]"
+            return content
         except Exception as exc:
-            return f"File read failed: {exc}"
+            return f"[Error reading {target}: {exc}]"
 
-    def list_files(self, relative: str = ".", limit: int = 200) -> str:
-        root = (self.workspace / relative).resolve()
-        if not root.exists():
-            return f"Path not found: {root}"
-        if root.is_file():
-            return str(root)
-        ignore_dirs = {".git", "node_modules", ".venv", ".godot", "__pycache__", "dist", "build"}
-        entries = []
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in ignore_dirs]
-            for name in sorted(filenames):
-                entries.append(str(Path(dirpath) / name))
-                if len(entries) >= limit:
-                    return "\n".join(entries)
-        return "\n".join(entries)
+    def list_files(self, path: str) -> str:
+        target = self._resolve_path(path)
+        if not target.exists():
+            return f"[Error: Path not found: {target}]"
+        try:
+            items = []
+            for item in target.iterdir():
+                item_type = "dir" if item.is_dir() else "file"
+                items.append(f"{item_type}: {item.name}")
+            return "\n".join(items)
+        except Exception as exc:
+            return f"[Error listing {target}: {exc}]"
 
-    # Browser automation methods
+    # Browser automation - delegated to BrowserTools
     def browse(self, url: str) -> str:
-        """Navigate to a URL."""
-        blocked = self._policy_block("browse", url=url)
-        if blocked:
-            return blocked
         return self.browser.browse(url)
 
-    def search_browser(self, query: str, site: str = "") -> str:
-        """Search the web using browser automation."""
-        blocked = self._policy_block("search_browser", query=query, site=site)
-        if blocked:
-            return blocked
-        return self.browser.search_web_browser(query, site)
+    def search_browser(self, query: str) -> str:
+        return self.browser.search(query)
 
     def get_page_content(self) -> str:
-        """Get text content of the current page."""
         return self.browser.get_page_content()
 
     def get_page_links(self) -> str:
-        """Get links on the current page."""
-        return self.browser.get_links()
+        return self.browser.get_page_links()
 
     def click_link(self, text: str) -> str:
-        """Click a link by text."""
-        blocked = self._policy_block("click_link", text=text)
-        if blocked:
-            return blocked
         return self.browser.click_link(text)
 
-    def fill_form(self, data: dict, form_index: int = 0) -> str:
-        """Fill a form on the current page."""
-        blocked = self._policy_block("fill_form", form_index=form_index, field_count=len(data))
-        if blocked:
-            return blocked
-        return self.browser.fill_form(data, form_index)
-
     def find_forms(self) -> str:
-        """Find forms on the current page."""
         return self.browser.find_forms()
 
-    def download_file(self, url: str = None, filename: str = None) -> str:
-        """Download a file."""
-        blocked = self._policy_block("download_file", url=url or "", filename=filename or "")
-        if blocked:
-            return blocked
-        return self.browser.download(url, filename)
+    def fill_form(self, data: dict) -> str:
+        return self.browser.fill_form(data)
 
-    def screenshot(self, filename: str = "kai_screenshot.png") -> str:
-        """Take a screenshot."""
-        return self.browser.screenshot(filename)
+    def screenshot(self) -> str:
+        return self.browser.screenshot()
 
-    # Document methods
-    def list_documents(self, category: str = None) -> str:
-        """List documents."""
-        return self.documents.list_documents(category)
+    def download_file(self, url: str | None = None, filename: str | None = None) -> str:
+        return self.browser.download_file(url, filename)
 
-    def find_document(self, query: str) -> str:
-        """Find documents by name."""
-        return self.documents.find_document(query)
+    # Document management - delegated to DocumentHandler
+    def list_documents(self) -> str:
+        return self.documents.list_documents()
+
+    def find_document(self, name: str) -> str:
+        return self.documents.find_document(name)
 
     def read_document(self, path: str) -> str:
-        """Read a document."""
         return self.documents.read_document(path)
 
     def organize_downloads(self) -> str:
-        """Organize downloaded files."""
         return self.documents.organize_downloads()
 
     def document_stats(self) -> str:
-        """Get document library stats."""
-        return self.documents.get_stats()
+        return self.documents.document_stats()
 
-    def _ocr_image(self, image_path: Path, text_base: Path) -> str:
+    # OCR and screen capture
+    def _ocr_image(self, image_path: Path) -> str:
         if not TESSERACT_PATH.exists():
-            return f"Tesseract not found at {TESSERACT_PATH}"
-        completed = subprocess.run(
-            [str(TESSERACT_PATH), str(image_path), str(text_base)],
-            cwd=str(self.workspace),
-            capture_output=True,
-            timeout=60,
-            **SUBPROCESS_TEXT_KWARGS,
-        )
-        if completed.returncode != 0:
-            return json.dumps(
-                {"error": "ocr_failed", "stderr": completed.stderr.strip()},
-                indent=2,
+            return f"[Error: Tesseract not found at {TESSERACT_PATH}]"
+        try:
+            result = subprocess.run(
+                [str(TESSERACT_PATH), str(image_path), "stdout", "-l", "eng"],
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
-        text_path = text_base.with_suffix(".txt")
-        if not text_path.exists():
-            return "OCR finished but no text file was produced."
-        return text_path.read_text(encoding="utf-8", errors="replace")[:12000]
+            return result.stdout.strip()
+        except Exception as exc:
+            return f"[OCR Error: {exc}]"
 
     def capture_screen_ocr(self) -> str:
-        image_path = self.tmp_dir / "kai_screen_ocr.png"
-        text_base = self.tmp_dir / "kai_screen_ocr"
-        if image_path.exists():
-            image_path.unlink()
-        capture_command = (
-            "Add-Type -AssemblyName System.Windows.Forms; "
-            "Add-Type -AssemblyName System.Drawing; "
-            "$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; "
-            "$bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height; "
-            "$graphics = [System.Drawing.Graphics]::FromImage($bmp); "
-            "$graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size); "
-            f"$bmp.Save('{image_path}', [System.Drawing.Imaging.ImageFormat]::Png); "
-            "$graphics.Dispose(); "
-            "$bmp.Dispose()"
-        )
-        result = self.run_shell(capture_command, timeout=20)
-        if not image_path.exists():
-            detail = result.strip() if isinstance(result, str) else ""
-            if detail:
-                return f"Screen capture failed: {detail}"
-            return "Screen capture failed: no image produced."
-        return self._ocr_image(image_path=image_path, text_base=text_base)
+        if self.is_linux:
+            # Try Linux screenshot tools
+            screenshot_path = self.tmp_dir / "screenshot.png"
+            try:
+                # Try gnome-screenshot first
+                result = subprocess.run(
+                    ["gnome-screenshot", "-f", str(screenshot_path)],
+                    capture_output=True,
+                    timeout=10,
+                )
+                if result.returncode == 0 and screenshot_path.exists():
+                    return self._ocr_image(screenshot_path)
+            except FileNotFoundError:
+                pass
+            
+            # Try scrot
+            try:
+                result = subprocess.run(
+                    ["scrot", str(screenshot_path)],
+                    capture_output=True,
+                    timeout=10,
+                )
+                if result.returncode == 0 and screenshot_path.exists():
+                    return self._ocr_image(screenshot_path)
+            except FileNotFoundError:
+                pass
+            
+            # Try import (ImageMagick)
+            try:
+                result = subprocess.run(
+                    ["import", "-window", "root", str(screenshot_path)],
+                    capture_output=True,
+                    timeout=10,
+                )
+                if result.returncode == 0 and screenshot_path.exists():
+                    return self._ocr_image(screenshot_path)
+            except FileNotFoundError:
+                pass
+            
+            return json.dumps({
+                "action": "capture_screen_ocr",
+                "ok": False,
+                "error": "No Linux screenshot tool found. Install gnome-screenshot, scrot, or ImageMagick."
+            }, indent=2)
+        else:
+            # Windows screenshot using PowerShell
+            screenshot_path = self.tmp_dir / "screenshot.png"
+            ps_script = f"""
+
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+$graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+$bitmap.Save('{screenshot_path}')
+$graphics.Dispose()
+$bitmap.Dispose()
+"""
+            result = self._run_native(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                timeout=30,
+            )
+            if result["returncode"] == 0 and screenshot_path.exists():
+                return self._ocr_image(screenshot_path)
+            return json.dumps({
+                "action": "capture_screen_ocr",
+                "ok": False,
+                "error": result.get("stderr", "Screenshot failed")
+            }, indent=2)
+
+    def click(self, x: int, y: int) -> str:
+        try:
+            pyautogui.click(x, y)
+            return json.dumps({"action": "click", "ok": True, "x": x, "y": y}, indent=2)
+        except Exception as e:
+            return json.dumps({"action": "click", "ok": False, "error": str(e)}, indent=2)
+
+    def type_text(self, text: str) -> str:
+        try:
+            pyautogui.typewrite(text)
+            return json.dumps({"action": "type_text", "ok": True, "text": text}, indent=2)
+        except Exception as e:
+            return json.dumps({"action": "type_text", "ok": False, "error": str(e)}, indent=2)
 
     def capture_active_window_ocr(self) -> str:
-        image_path = self.tmp_dir / "kai_active_window_ocr.png"
-        text_base = self.tmp_dir / "kai_active_window_ocr"
-        if image_path.exists():
-            image_path.unlink()
-        capture_command = (
-            "Add-Type -AssemblyName System.Drawing; "
-            "Add-Type @'\n"
-            "using System;\n"
-            "using System.Runtime.InteropServices;\n"
-            "public static class KaiWin32 {\n"
-            "  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }\n"
-            "  [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();\n"
-            "  [DllImport(\"user32.dll\")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);\n"
-            "}\n"
-            "'@; "
-            "$hwnd = [KaiWin32]::GetForegroundWindow(); "
-            "if ($hwnd -eq [IntPtr]::Zero) { exit 2 }; "
-            "$rect = New-Object KaiWin32+RECT; "
-            "if (-not [KaiWin32]::GetWindowRect($hwnd, [ref]$rect)) { exit 3 }; "
-            "$width = [Math]::Max(1, $rect.Right - $rect.Left); "
-            "$height = [Math]::Max(1, $rect.Bottom - $rect.Top); "
-            "$bmp = New-Object System.Drawing.Bitmap $width, $height; "
-            "$graphics = [System.Drawing.Graphics]::FromImage($bmp); "
-            "$graphics.CopyFromScreen((New-Object System.Drawing.Point($rect.Left, $rect.Top)), [System.Drawing.Point]::Empty, (New-Object System.Drawing.Size($width, $height))); "
-            f"$bmp.Save('{image_path}', [System.Drawing.Imaging.ImageFormat]::Png); "
-            "$graphics.Dispose(); "
-            "$bmp.Dispose()"
-        )
-        result = self.run_shell(capture_command, timeout=20)
-        if not image_path.exists():
-            detail = result.strip() if isinstance(result, str) else ""
-            prefix = "Active window capture failed."
-            if detail:
-                prefix += f" Shell output: {detail}"
-            return prefix + "\n\n" + self.capture_screen_ocr()
-        return self._ocr_image(image_path=image_path, text_base=text_base)
+        if self.is_linux:
+            return json.dumps({
+                "action": "capture_active_window_ocr",
+                "ok": False,
+                "error": "Active window capture not implemented for Linux. Use capture_screen_ocr instead."
+            }, indent=2)
+        else:
+            # Windows active window capture
+            screenshot_path = self.tmp_dir / "active_window.png"
+            script_path = Path(__file__).parent / "get_active_window.ps1"
+            
+            result = self._run_native(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path), "-ScreenshotPath", str(screenshot_path)],
+                timeout=15
+            )
+
+            if result["returncode"] != 0:
+                return json.dumps({
+                    "action": "capture_active_window_ocr",
+                    "ok": False,
+                    "error": f"PowerShell script failed: {result['stderr']}"
+                }, indent=2)
+            if result["returncode"] == 0 and screenshot_path.exists():
+                return self._ocr_image(screenshot_path)
+            return json.dumps({
+                "action": "capture_active_window_ocr",
+                "ok": False,
+                "error": result.get("stderr", "Active window capture failed")
+            }, indent=2)
+
+    # === ANONYMITY & STEALTH ===
+
+    def stealth_status(self) -> str:
+        return json.dumps({
+            "chimera": self.chimera.status() if self.chimera else {"ok": False, "message": "Chimera not initialized"},
+            "anonymity": self.anonymity.status(),
+        }, indent=2)
+
+    def stealth_on(self, tor: bool = False) -> str:
+        if tor:
+            result = self.anonymity.set_tor(True)
+        else:
+            result = self.anonymity.rotate_proxy()
+        if self.chimera:
+            self.chimera.mutate(intensity="high")
+        return json.dumps({"action": "stealth_on", **result}, indent=2)
+
+    def stealth_off(self) -> str:
+        self.anonymity.set_tor(False)
+        return json.dumps({"action": "stealth_off", "ok": True, "message": "Stealth disabled. Going direct."}, indent=2)
+
+    def rotate_identity(self) -> str:
+        if self.chimera:
+            chimera_result = self.chimera.mutate(intensity="high")
+        else:
+            chimera_result = {"ok": False, "message": "Chimera not initialized"}
+
+        proxy_result = self.anonymity.rotate_proxy()
+        fingerprint = self.anonymity.generate_fingerprint()
+
+        return json.dumps({
+            "action": "rotate_identity",
+            "ok": True,
+            "chimera": chimera_result,
+            "proxy": proxy_result,
+            "new_fingerprint": fingerprint,
+            "message": "New identity generated. Fingerprint rotated, proxy cycled.",
+        }, indent=2)
+
+    def check_ip_leaks(self) -> str:
+        return json.dumps({
+            "action": "check_ip_leaks",
+            **self.anonymity.check_ip(),
+        }, indent=2)

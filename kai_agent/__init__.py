@@ -1,1 +1,1 @@
-"""Kai local assistant package."""
+﻿# Kai Agent - Main package initialization

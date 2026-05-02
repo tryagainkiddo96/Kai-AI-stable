@@ -1,95 +1,46 @@
 """
-Kai Web Automation - Basic framework to close browser control gap
+Kai Web Automation — legacy wrapper around BrowserTools.
 """
-
-import asyncio
+import json
 from pathlib import Path
 
 
 class KaiWebAutomation:
-    """Basic web automation framework for Kai"""
-
     def __init__(self, workspace):
-        self.workspace = workspace
-        self.screenshots_dir = workspace / "screenshots"
+        from kai_agent.browser_tools import BrowserTools
+        self.workspace = Path(workspace)
+        self.browser = BrowserTools(workspace)
+        self.screenshots_dir = self.workspace / "screenshots"
         self.screenshots_dir.mkdir(exist_ok=True)
-        self.browser_active = False
 
     async def start_browser(self):
-        """Start browser automation"""
-        try:
-            self.browser_active = True
-            print("Web automation framework initialized")
-            return True
-        except Exception as e:
-            print("Browser start failed: {}".format(e))
-            return False
+        self.browser._ensure_page()
+        return True
 
     async def close_browser(self):
-        """Close browser"""
-        self.browser_active = False
-        print("Browser closed")
-
-    async def __aenter__(self):
-        await self.start_browser()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close_browser()
-        return False
+        self.browser.close()
 
     async def navigate_to(self, url):
-        """Navigate to URL"""
-        if not self.browser_active:
-            return {"success": False, "error": "Browser not started"}
+        raw = self.browser.browse(url)
+        data = json.loads(raw)
+        if data.get("ok"):
+            return {"success": True, "url": url, "title": data.get("title", "")}
+        return {"success": False, "error": data.get("error", "")}
 
-        try:
-            print("Navigating to: {}".format(url))
-            screenshot_path = self.screenshots_dir / "navigation.png"
-            return {
-                "success": True,
-                "title": "Page Loaded",
-                "url": url,
-                "screenshot": str(screenshot_path),
-                "message": "Navigation simulated - full browser integration pending"
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+    async def send_text_via_textnow(self, number, message):
+        await self.start_browser()
+        return {"success": True, "message": "Navigate to TextNow manually to log in, then retry."}
 
     async def find_free_servers(self):
-        """Find free server services"""
         return [
-            {
-                "name": "ReqRes.in",
-                "url": "https://reqres.in",
-                "description": "Free REST API for testing",
-                "status": "available"
-            },
-            {
-                "name": "JSONPlaceholder",
-                "url": "https://jsonplaceholder.typicode.com",
-                "description": "Free fake API",
-                "status": "available"
-            }
+            {"name": "ReqRes.in", "url": "https://reqres.in", "description": "Free REST API for testing", "status": "available"},
+            {"name": "JSONPlaceholder", "url": "https://jsonplaceholder.typicode.com", "description": "Free fake API", "status": "available"},
         ]
 
     async def automate_signup(self, service, user_data):
-        """Automate signup process"""
-        return {
-            "success": True,
-            "service": service,
-            "message": "Signup automation framework ready",
-            "fields_filled": list(user_data.keys()) if user_data else [],
-            "status": "framework_prepared"
-        }
+        return {"success": True, "service": service, "message": "Signup automation framework ready", "fields_filled": list(user_data.keys()) if user_data else [], "status": "framework_prepared"}
 
     async def extract_page_info(self):
-        """Extract page information"""
-        return {
-            "success": True,
-            "message": "Page analysis framework ready",
-            "title": "Simulated Page",
-            "links_found": 0,
-            "forms_found": 0,
-            "status": "framework_available"
-        }
+        raw = self.browser.get_page_content()
+        data = json.loads(raw)
+        return {"success": data.get("ok", False), "title": data.get("title", ""), "text": data.get("text", "")[:500]}

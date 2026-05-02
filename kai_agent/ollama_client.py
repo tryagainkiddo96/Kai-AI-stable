@@ -9,6 +9,33 @@ from pathlib import Path
 from urllib import error, request
 
 
+def _load_dotenv(path: str = ".env") -> None:
+    """Load environment variables from a .env file (simple parser, no deps)."""
+    env_file = Path(path)
+    if not env_file.exists():
+        # Try parent directory
+        env_file = Path(__file__).parent.parent / ".env"
+    if not env_file.exists():
+        return
+    try:
+        with env_file.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, _, value = line.partition("=")
+                    key = key.strip()
+                    value = value.strip().strip("\"'")
+                    if key and value and key not in os.environ:
+                        os.environ[key] = value
+    except Exception:
+        pass
+
+
+_load_dotenv()
+
+
 class OllamaClient:
     def __init__(self, base_url: str | None = None, model: str | None = None):
         self.provider = os.environ.get("KAI_PROVIDER", "ollama").strip().lower() or "ollama"
@@ -41,6 +68,12 @@ class OllamaClient:
             or self._load_config_key("deepseek_api_key")
         )
         self.deepseek_base_url = os.environ.get("DEEPSEEK_API_URL", "https://api.deepseek.com").rstrip("/")
+        # GROQ config — env var first, then local kai_config.json, then empty
+        self.groq_api_key = (
+            os.environ.get("GROQ_API_KEY", "").strip()
+            or self._load_config_key("groq_api_key")
+        )
+        self.groq_base_url = os.environ.get("GROQ_API_URL", "https://api.groq.com/openai/v1").rstrip("/")
 
     def _load_config_key(self, key: str) -> str:
         config_path = Path("kai_config.json")
@@ -63,7 +96,7 @@ class OllamaClient:
             return False
 
     def list_models(self, timeout: int = 3) -> list[str]:
-        if self.provider in {"codex", "openai-codex", "openai", "huggingface", "hf", "deepseek"}:
+        if self.provider in {"codex", "openai-codex", "openai", "huggingface", "hf", "deepseek", "groq"}:
             return [self.model]
         now = time.time()
         if self._model_inventory_cache and (now - self._model_inventory_cache[0]) < self.model_inventory_ttl:
@@ -92,6 +125,8 @@ class OllamaClient:
             return self._chat_huggingface(messages, timeout=timeout)
         if self.provider == "deepseek":
             return self._chat_deepseek(messages, timeout=timeout)
+        if self.provider == "groq":
+            return self._chat_groq(messages, timeout=timeout)
         payload = json.dumps(
             {
                 "model": self.model,
@@ -366,9 +401,64 @@ class OllamaClient:
             raise RuntimeError("DeepSeek model `" + self.model + "` returned an empty response")
         return content
 
+    def _chat_groq(self, messages: list[dict], timeout: int) -> str:
+        if not self.groq_api_key:
+            raise RuntimeError(
+                "GROQ provider selected but no API key found. "
+                "Set GROQ_API_KEY environment variable or add groq_api_key to kai_config.json. "
+                "Get a key at https://console.groq.com/keys"
+            )
+        url = self.groq_base_url + "/chat/completions"
+        payload = json.dumps({
+            "model": self.model or "llama-3.1-8b-instant",
+            "messages": messages,
+            "max_tokens": self.num_predict,
+            "temperature": self.temperature,
+            "stream": False,
+        }).encode("utf-8")
+        req = request.Request(
+            url,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + self.groq_api_key,
+                "User-Agent": "Kai-Assistant/1.0 (Python urllib)",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=timeout) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8").strip()
+            except Exception:
+                pass
+            if exc.code == 401:
+                raise RuntimeError("GROQ API key is invalid or expired. Check your key at https://console.groq.com/keys") from exc
+            if exc.code == 429:
+                raise RuntimeError("GROQ rate limit exceeded. Wait a moment or check your tier limits.") from exc
+            if exc.code in (500, 502, 503):
+                raise RuntimeError("GROQ server error (" + str(exc.code) + "). Their API may be temporarily overloaded.") from exc
+            raise RuntimeError("GROQ HTTP error " + str(exc.code) + ": " + detail[:500]) from exc
+        except error.URLError as exc:
+            raise RuntimeError("GROQ API is not reachable: " + str(exc.reason)) from exc
+        except TimeoutError as exc:
+            raise RuntimeError("GROQ request timed out after " + str(timeout) + "s") from exc
+
+        choices = data.get("choices", [])
+        if not choices:
+            raise RuntimeError("GROQ model `" + self.model + "` returned empty choices")
+        content = str(choices[0].get("message", {}).get("content", "")).strip()
+        if not content:
+            raise RuntimeError("GROQ model `" + self.model + "` returned an empty response")
+        return content
+
     def set_provider(self, provider: str, model: str | None = None) -> str:
         provider = provider.strip().lower()
-        supported = {"ollama", "huggingface", "hf", "deepseek", "codex", "openai-codex", "openai"}
+        supported = {"ollama", "huggingface", "hf", "deepseek", "groq", "codex", "openai-codex", "openai"}
         if provider not in supported:
             return "Unknown provider '" + provider + "'. Supported: " + ", ".join(sorted(supported))
         old = self.provider
@@ -383,6 +473,8 @@ class OllamaClient:
                 self.model = "microsoft/Phi-3-mini-4k-instruct"
             elif self.provider == "deepseek" and not self.model.startswith("deepseek-"):
                 self.model = "deepseek-chat"
+            elif self.provider == "groq" and not self.model.startswith("llama-") and not self.model.startswith("mixtral-") and not self.model.startswith("gemma-"):
+                self.model = "llama-3.1-8b-instant"
             elif self.provider in {"codex", "openai-codex", "openai"} and self.model.startswith("ollama-"):
                 self.model = "gpt-4o-mini"
         changed_model = " (model: " + self.model + ")" if self.model != old_model else ""
@@ -393,6 +485,172 @@ class OllamaClient:
         self.model = model
         self._model_inventory_cache = None
         return "Model changed from " + old + " to " + self.model
+
+    def chat_stream(self, messages: list[dict], timeout: int | None = None):
+        """Yield tokens as they stream from the provider."""
+        if timeout is None:
+            timeout = self.default_timeout
+        if self.provider in {"codex", "openai-codex", "openai"}:
+            yield from self._chat_stream_codex(messages, timeout=timeout)
+        elif self.provider in {"huggingface", "hf"}:
+            yield from self._chat_stream_huggingface(messages, timeout=timeout)
+        elif self.provider == "deepseek":
+            yield from self._chat_stream_deepseek(messages, timeout=timeout)
+        elif self.provider == "groq":
+            yield from self._chat_stream_groq(messages, timeout=timeout)
+        else:
+            yield from self._chat_stream_ollama(messages, timeout=timeout)
+
+    def _chat_stream_ollama(self, messages: list[dict], timeout: int):
+        payload = json.dumps({
+            "model": self.model,
+            "messages": messages,
+            "stream": True,
+            "options": {
+                "temperature": self.temperature,
+                "repeat_penalty": self.repeat_penalty,
+                "num_predict": self.num_predict,
+                "num_ctx": self.num_ctx,
+            },
+        }).encode("utf-8")
+        req = request.Request(
+            f"{self.base_url}/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            response = request.urlopen(req, timeout=timeout)
+            for line in response:
+                line = line.decode("utf-8").strip()
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                    content = chunk.get("message", {}).get("content", "")
+                    if content:
+                        yield content
+                    if chunk.get("done", False):
+                        break
+                except json.JSONDecodeError:
+                    continue
+        except error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8").strip()
+            except Exception:
+                pass
+            raise RuntimeError(f"Ollama streaming HTTP error {exc.code}: {detail[:500]}") from exc
+        except TimeoutError as exc:
+            raise RuntimeError(f"Ollama streaming request timed out after {timeout}s") from exc
+        except error.URLError as exc:
+            raise RuntimeError(f"Ollama is not reachable for streaming: {exc.reason}") from exc
+
+    def _chat_stream_deepseek(self, messages: list[dict], timeout: int):
+        if not self.deepseek_api_key:
+            raise RuntimeError("DeepSeek API key not found for streaming")
+        url = self.deepseek_base_url + "/chat/completions"
+        payload = json.dumps({
+            "model": self.model or "deepseek-chat",
+            "messages": messages,
+            "max_tokens": self.num_predict,
+            "temperature": self.temperature,
+            "stream": True,
+        }).encode("utf-8")
+        req = request.Request(
+            url,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + self.deepseek_api_key,
+            },
+            method="POST",
+        )
+        try:
+            response = request.urlopen(req, timeout=timeout)
+            for line in response:
+                line = line.decode("utf-8").strip()
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    content = delta.get("content", "")
+                    if content:
+                        yield content
+                except json.JSONDecodeError:
+                    continue
+        except error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8").strip()
+            except Exception:
+                pass
+            raise RuntimeError(f"DeepSeek streaming error {exc.code}: {detail[:500]}") from exc
+        except TimeoutError as exc:
+            raise RuntimeError(f"DeepSeek streaming request timed out after {timeout}s") from exc
+        except error.URLError as exc:
+            raise RuntimeError(f"DeepSeek API not reachable for streaming: {exc.reason}") from exc
+
+    def _chat_stream_groq(self, messages: list[dict], timeout: int):
+        if not self.groq_api_key:
+            raise RuntimeError("GROQ API key not found for streaming")
+        url = self.groq_base_url + "/chat/completions"
+        payload = json.dumps({
+            "model": self.model or "llama-3.1-8b-instant",
+            "messages": messages,
+            "max_tokens": self.num_predict,
+            "temperature": self.temperature,
+            "stream": True,
+        }).encode("utf-8")
+        req = request.Request(
+            url,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + self.groq_api_key,
+            },
+            method="POST",
+        )
+        try:
+            response = request.urlopen(req, timeout=timeout)
+            for line in response:
+                line = line.decode("utf-8").strip()
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    content = delta.get("content", "")
+                    if content:
+                        yield content
+                except json.JSONDecodeError:
+                    continue
+        except error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8").strip()
+            except Exception:
+                pass
+            raise RuntimeError(f"GROQ streaming error {exc.code}: {detail[:500]}") from exc
+        except TimeoutError as exc:
+            raise RuntimeError(f"GROQ streaming request timed out after {timeout}s") from exc
+        except error.URLError as exc:
+            raise RuntimeError(f"GROQ API not reachable for streaming: {exc.reason}") from exc
+
+    def _chat_stream_huggingface(self, messages: list[dict], timeout: int):
+        yield from self._chat_stream_deepseek(messages, timeout)
+
+    def _chat_stream_codex(self, messages: list[dict], timeout: int):
+        fallback = self._chat_codex(messages, timeout)
+        for word in fallback.split():
+            yield word + " "
 
     def _request_json(self, path: str, timeout: int, method: str = "GET") -> dict:
         req = request.Request(self.base_url + path, method=method)

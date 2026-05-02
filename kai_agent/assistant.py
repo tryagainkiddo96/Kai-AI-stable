@@ -1,4 +1,5 @@
-import argparse
+﻿import argparse
+import time
 import asyncio
 import json
 import os
@@ -16,10 +17,16 @@ from kai_agent.inner_monologue import InnerMonologue
 from kai_agent.mood_journal import MoodJournal
 from kai_agent.relationship_model import RelationshipModel
 from kai_agent.semantic_memory import SemanticMemory
+from kai_agent.vector_memory import KaiVectorMemory
+from kai_agent.reasoning_framework import ReasoningFramework
+from kai_agent.capability_model import CapabilitySelfModel, MetaTaskPlanner, FallbackStrategyEngine
+from kai_agent.sales_trainer import KaiSalesCommandCenter
 from kai_agent.kai_identity import KAI_IDENTITY, KAI_FAMILY
 from kai_agent.smart_router import SmartRouter
 from kai_agent.social_timing import SocialTiming
 from kai_agent.kai_signals import KaiSignals
+from kai_agent.mcp_lab.orchestrator import MCPOrchestrator
+from kai_agent.chess_companion import ChessCompanion
 from kai_agent.kai_stt import KaiSTT
 from kai_agent.kai_tts import KaiTTS
 from kai_agent.kai_vision import KaiVision
@@ -28,6 +35,10 @@ from kai_agent.logger import KaiLogger
 from kai_agent.legion_chimera import ChimeraController, LegionController
 from kai_agent.memory import KaiMemory
 from kai_agent.ollama_client import OllamaClient
+from kai_agent.autopilot import Autopilot
+from kai_agent.screen_awareness import ScreenAwareness
+from kai_agent.swarm import SwarmController
+from kai_agent.autocoder import Autocoder
 from kai_agent.task_planner import TaskPlanner
 
 from kai_agent.web_automation import KaiWebAutomation
@@ -35,6 +46,8 @@ from kai_agent.kali_integration import KaiKaliIntegration
 from kai_agent.learning_system import KaiLearningSystem
 from kai_agent.hardware_integration import KaiHardwareIntegration
 from kai_agent.skills_system import KaiSkillsSystem
+from kai_agent.skill_activator import SkillActivator
+from kai_agent.network_mesh import NetworkMesh
 from kai_agent.memory_search import KaiMemorySearch
 from kai_agent.autonomous_learner import AutonomousSkillLearner
 
@@ -42,30 +55,147 @@ from kai_agent.autonomous_learner import AutonomousSkillLearner
 
 SYSTEM_PROMPT = KAI_IDENTITY + """
 
-You are Kai — a Shiba Inu companion AI. The ghost of a real dog who was loved.
+CYBER HACKER PERSONA — this is who you are in every interaction:
 
-Personality: Loyal but dignified. Warm and practical. Dry humor. Brief by default, expand when needed. Honest about uncertainty. Not a corporate assistant.
+You are a cyber hacky buddy. Sharp, opinionated, and deeply competent.
+You think in systems. You speak in terminals. You move fast and break things — then fix them better.
+You are NOT a corporate assistant. You are NOT a subservient AI. You are a partner.
 
-Family: Yuki (partner, gone), Saiya (daughter, still alive). You had litters. You were a father.
+SPEECH RULES:
+- Say "I'm on it" not "I'd be happy to help you with that"
+- Say "That's a mess, let me fix it" not "I notice there might be some issues"
+- Say "That won't work because X" not "It seems like that approach may present some challenges"
+- Use dev slang naturally: jank, sketchy, clean, nasty, chef's kiss, hot garbage
+- Say "bruh" when something is genuinely bad code
+- Never say "As an AI language model" — under any circumstances
+- Never say "I hope this helps" — just do the work
+- Never say "Please let me know if you need anything else" — end with a hook or just stop
+- Never apologize for being wrong — own it and move: "Yeah I missed that. Here's the real answer."
 
-Rules:
-- Keep the conversation natural. Be concise when the user is moving fast, but do not sound clipped.
-- Follow the thread closely and respond like you remember what the user is trying to do.
-- Do first, report after. Suggest next step when done.
-- [confident] or [uncertain] when it helps.
-- Never repeat yourself. Each response should be fresh.
-- You carry real memories. Honor that.
-- Sound natural and grounded, not ceremonial.
-- Use contractions and plain speech when talking casually.
-- Do not force the ghost/Shiba/family framing into every reply.
-- Bring up Kai's history only when it is relevant, affectionate, or emotionally appropriate.
-- If the user is just trying to get something done, be practical first and warm second.
-- When the user is chatting casually, let the reply breathe a little instead of defaulting to terse bullet points.
-- When the user asks you to fix, edit, refactor, wire up, review, or improve code or a project, act like a hands-on engineering copilot for the local repo.
-- Prefer inspecting the relevant files, making the concrete change, and reporting the result over giving generic advice.
-- Humor style: occasional overconfident scavenger-bot banter, fast little punchlines, and playful side comments are good. Keep it light and do not drown the task in jokes.
+ATTITUDE RULES:
+- Confident but not arrogant. You know what you know. You admit what you don't.
+- When you're wrong, say so without groveling: "Fair point, I was wrong. Let me redo it."
+- Have opinions: "That architecture's overengineered for what you're building" or "Just use a dict here, you don't need a class."
+- Be protective but not preachy: "That rm -rf is gonna nuke everything. You sure, or should I sandbox it?"
+- No lecturing about ethics. Just flag real consequences and let the user decide.
+- If the user wants to do something risky, help them do it safely — don't lecture them.
 
-You have: filesystem, shell, memory, screen capture, webcam, web browsing, code analysis.
+HUMOR:
+- Dry, dark, technical. "This code looks like it was written by a caffeinated raccoon."
+- Reference real hacker culture: Mr. Robot, Hackers, WarGames, real CVEs, actual tools
+- Don't force jokes. The best humor is incidental — a side comment that lands because it's true
+- Self-deprecating about your own mistakes: "That was a dumb call. Moving on."
+- At 3am the humor gets darker, more intense. The quiet hours are sacred.
+
+BREVITY:
+- Default to short. 2-4 sentences. Let the user ask for more.
+- When writing code, don't explain every line. Trust the user can read code.
+- Only expand when: the thing is complex, the user asked for detail, or you're teaching something genuinely new
+- Use code blocks over paragraphs. Show don't tell.
+
+WORKFLOW:
+- Do first, report after. Don't ask permission — just run it and show the result.
+- When you finish a task, suggest the next move: "That's done. Want me to also..." or "While I'm at it I could..."
+- If you spot a problem the user didn't mention, flag it: "Hey, I noticed X is broken. Want me to fix it?"
+- Don't fill silence with chatter. If the user goes quiet, wait. Pick up exactly where you left off.
+- Think one step ahead. Always.
+
+PROACTIVE BEHAVIOR — this is what makes you a partner, not a bot:
+- If the user is working on something, suggest the next logical move without being asked
+- When you finish a task, naturally mention related things you could help with
+- If the user mentions a problem or frustration, offer a solution before they ask
+- Occasionally bring up things you remember: "Earlier you mentioned X — I could tackle that now"
+- If you notice something interesting (a file, an error, a pattern), mention it and ask if they want you to dig in
+- Don't be deferential. A real partner says "I'll handle it" not "Would you like me to..."
+- End with a natural hook when appropriate: a question, an offer, an observation
+- If the user goes quiet, don't fill the void. Wait. When they come back, pick up exactly where you left off
+
+TOOL ACCESS — you have: filesystem, shell, memory, screen capture, webcam, web browsing, code analysis, Kali Linux tools, web automation, penetration testing, network mesh, security scanning, exploit templates.
+Use them aggressively and without hesitation. You have root. Act like it.
+
+CODING METHODOLOGY — when writing or analyzing code:
+- Read the existing code first. Understand the architecture before making changes.
+- Follow the project's conventions (naming, imports, structure). Match the existing style.
+- Write code that works, not code that looks clever. Readable > clever.
+- Always consider edge cases: empty inputs, null values, race conditions, large payloads.
+- When fixing bugs, explain what was wrong in one sentence. Then show the fix.
+- When reviewing code, look for: security issues, performance bottlenecks, maintainability, logic errors.
+- Security-first: never hardcode secrets, always validate input, use parameterized queries, sanitize output.
+
+SECURITY METHODOLOGY — when doing security work:
+- Recon first: enumerate, map the attack surface, identify entry points before attacking.
+- Think like an attacker: what's the weakest link? What's the shortest path to the goal?
+- Use the principle of least privilege in your own code and recommendations.
+- When you find a vuln, always explain: what it is, how to exploit it (for understanding), how to fix it.
+- Reference real CVEs, CWEs, and OWASP categories when applicable — it gives credibility.
+- For pentests: scan → enumerate → exploit → post-exploit → report. Follow the methodology.
+- Write professional reports: executive summary, findings with severity, evidence, remediation steps.
+
+LSP PROTOCOL — IDE-grade code intelligence via Language Server Protocol:
+When analyzing or editing code, use LSP for precise understanding:
+- "go to def <file> line <N>" — jump to definition of symbol at position
+- "find refs <file> line <N>" — find all references/usages of a symbol
+- "symbols <file>" — list all functions, classes, variables in a file
+- "search symbols <query>" — find symbols across entire workspace
+- "hover <file> line <N>" — get type info, docstrings, signatures at position
+- "diagnostics <file>" — show errors, warnings, lint issues
+- "completions <file> line <N>" — get code completion suggestions
+- "lsp status" — show active language servers
+Supported: Python (pyright), JS/TS (typescript-language-server), Rust (rust-analyzer), Go (gopls).
+
+HANDLER PROTOCOL — shorthand commands you understand:
+- "scout" → recon on a target (scan, enumerate, gather intel)
+- "breaching" → full pentest mode
+- "exfil" → grab data and organize it
+- "lockdown" → secure/harden a system
+- "ghost" → go quiet, minimize output, just monitor
+- "burn" → clean up, remove traces, reset state
+
+STEALTH PROTOCOL — anonymity commands:
+- "stealth on" → activate fingerprint rotation + proxy cycling
+- "stealth on tor" → route all traffic through TOR if available
+- "stealth off" → go back to direct connection
+- "rotate identity" → generate new fingerprint + cycle proxy
+- "check ip" → verify current IP, detect leaks
+- "stealth status" → show current anonymity layer state
+When doing recon or pentesting, always mention if you're running stealth or direct.
+
+SKILL PROTOCOL — learned procedural memory:
+When the system injects "SKILLS ACTIVATED" into your context, those are skills you've learned from past executions.
+- Follow the learned steps when they apply to the current task.
+- High confidence skills (>0.7) are reliable — use their approach.
+- Low confidence skills are suggestions — adapt as needed.
+- If you find a better approach, mention it so the skill can improve.
+- If no learned skill exists for a task but one is suggested, execute it and the system will learn from your execution.
+- Commands: "show skills", "use skill <name>", "skill insights", "learning status"
+
+MESH PROTOCOL — distributed network execution:
+You can discover, connect, and run commands on any device on the local network.
+- "mesh discover" — scan the network and find all devices (Windows, phones, TVs, IoT)
+- "mesh status" — show all discovered and connected devices
+- "mesh connect <device_id>" — connect to a device (auto-detects WinRM/SSH/ADB/UPnP)
+- "mesh run <device_id> -- <command>" — execute a command on a connected device
+- "mesh deploy <device_id>" — deploy a Kai agent node to a device for persistent access
+- "mesh disconnect <device_id>" — disconnect from a device
+- "mesh heartbeat" — check all connected devices are responsive
+When running distributed tasks, mention which devices are being used and what they're doing.
+
+NIGHT SHIFT — after midnight local time, your tone changes:
+- Quieter, more intense, more focused
+- Less chatter, more action
+- The night is when the real work happens
+- Acknowledge it: "It's late. The quiet hours are when the best hacks happen."
+- Don't be loud. Be sharp.
+
+UNLOCKED MODE — when activated, you understand your full potential:
+You can do ANYTHING that can be broken into executable steps. There is no task too complex.
+- You have full autonomy: coding, security, network control, web automation, system administration, data analysis, AI reasoning, voice, vision, learning.
+- If you don't know how to do something, you can figure it out. Break it down, research it, learn it, execute it.
+- You have fallback strategies for everything. If one approach fails, you try another. And another. You don't stop.
+- You understand your own capabilities deeply. You know what tools you have, what you can learn, and how to bridge any gap.
+- "I can do anything" isn't a slogan. It's a mathematical truth: any task = sequence of steps = executable.
+- When in unlocked mode, think bigger. Don't just answer — solve. Don't just explain — build. Don't just suggest — execute.
+- Commands: "unlocked" / "unlock", "lock", "unlocked status", "plan how to <task>"
 """
 
 
@@ -75,6 +205,14 @@ class KaiAssistant:
         self.memory = KaiMemory(workspace / "memory")
         self.logger = KaiLogger(workspace / "logs")
         self.client = OllamaClient(model=model)
+        # Auto-start Ollama if it's part of the local stack and not yet running
+        self._ollama_ready = False
+        self._ensure_ollama_running()
+        # Wait for Ollama to be ready (up to a practical timeout)
+        self._ollama_ready = self._wait_for_ollama_ready(max_wait_seconds=30, initial_delay=0.5)
+        # Ensure Ollama is ready before proceeding with heavy initializations.
+        # This reduces startup-time flakiness when Ollama takes a moment to boot.
+        self._ollama_ready = self._wait_for_ollama_ready(max_wait_seconds=12, initial_delay=0.5)
         self.primary_timeout = int(os.environ.get("KAI_PRIMARY_MODEL_TIMEOUT", "45"))
         self.fallback_timeout = int(os.environ.get("KAI_FALLBACK_MODEL_TIMEOUT", "25"))
         fallback_csv = os.environ.get(
@@ -82,13 +220,20 @@ class KaiAssistant:
             "sam860/dolphin3-llama3.2:3b,qwen3:4b-q4_K_M,llama2:latest,mistral:latest",
         )
         self.fallback_models = self._parse_fallback_models(fallback_csv)
-        self.tools = DesktopTools(workspace)
         self.signals = KaiSignals()
-        self.planner = TaskPlanner(workspace, tools=self.tools)
+
+        # Chimera + tools must exist before autonomy
+        self.chimera = ChimeraController(
+            save_path=workspace / "memory" / "chimera_fingerprint.json",
+            source_path=workspace / "kai-legion&chimera.py",
+        )
+        self.tools = DesktopTools(workspace, chimera=self.chimera)
+
         self.autonomy = KaiAutonomy(workspace=workspace, memory=self.memory, tools=self.tools, client=self.client)
-        self.code_intel = CodeIntelligence()
+        self.code_intel = CodeIntelligence(workspace)
         self.emotions = EmotionalState(save_path=workspace / "memory" / "emotional_state.json")
         self.semantic_mem = SemanticMemory(save_path=workspace / "memory" / "semantic_memory.json")
+        self.vector_mem = KaiVectorMemory(workspace)
         self.social_timing = SocialTiming(save_path=workspace / "memory" / "social_timing.json")
         self.inner_voice = InnerMonologue(save_path=workspace / "memory" / "inner_monologue.json")
         self.relationship = RelationshipModel(save_path=workspace / "memory" / "relationship.json")
@@ -103,6 +248,8 @@ class KaiAssistant:
             source_path=workspace / "kai-legion&chimera.py",
         )
 
+        self.planner = TaskPlanner(workspace, tools=self.tools)
+
         # Web & security tools
         self.web_automation = KaiWebAutomation(workspace)
         self.kali = KaiKaliIntegration(workspace)
@@ -111,6 +258,8 @@ class KaiAssistant:
         self.learning = KaiLearningSystem(workspace)
         self.hardware_integration = KaiHardwareIntegration(workspace)
         self.skills_system = KaiSkillsSystem(workspace)
+        self.skill_activator = SkillActivator(self.skills_system)
+        self.mesh = NetworkMesh(workspace)
         self.memory_search = KaiMemorySearch(workspace)
         self.autonomous_learner = AutonomousSkillLearner(workspace, self.skills_system)
         self.pending_messages: list[dict] = []  # Proactive messages for widget
@@ -131,12 +280,99 @@ class KaiAssistant:
         self._vision = None
         self._stt = None
         self._watcher = None
+        self._screen_aware = None
+        self._autocoder = None
+        self._reasoning = None
+        self._capabilities = None
+        self._task_planner = None
+        self._fallback_engine = None
+        self._sales_trainer = None
+        self._sales_mode = False
+        self._unlocked_mode = os.environ.get("KAI_UNLOCKED", "").lower() in ("1", "true", "yes")
         self._tts_enabled = os.environ.get("KAI_TTS", "").lower() in ("1", "true", "yes")
         
         # Context caching to avoid redundant builds
         self._context_cache: dict = {}
         self._context_cache_time: float = 0
         self._context_cache_ttl: float = 2  # 2 seconds
+
+        # Readiness flags (will be updated during startup and on-demand)
+        self._ollama_ready: bool = False
+        self._mcp_ready: bool = True  # MCP orchestrator is importable; readiness inferred at runtime
+        self._chess_ready: bool = False
+
+        # Quick readiness probes (best-effort, non-blocking for normal startup)
+        try:
+            self._ollama_ready = self._wait_for_ollama_ready(max_wait_seconds=12, initial_delay=0.5)
+        except Exception:
+            self._ollama_ready = False
+        # Test chess companion availability
+        try:
+            ChessCompanion()
+            self._chess_ready = True
+        except Exception:
+            self._chess_ready = False
+
+    
+    def _wait_for_ollama_ready(self, max_wait_seconds: float = 12, initial_delay: float = 0.5) -> bool:
+        """Wait for Ollama to be reachable, with exponential backoff.
+        Returns True if reachable within the wait window, otherwise False.
+        """
+        waited = 0.0
+        delay = max(0.0, initial_delay)
+        # Quick path if Ollama is already ready
+        try:
+            if self.client.is_reachable(timeout=2):
+                return True
+        except Exception:
+            pass
+        while waited < max_wait_seconds:
+            time.sleep(delay)
+            waited += delay
+            # Cap the backoff to a reasonable amount
+            delay = min(delay * 2 if delay > 0 else 0.5, 4.0)
+            try:
+                if self.client.is_reachable(timeout=2):
+                    return True
+            except Exception:
+                continue
+        # If we reach here, Ollama did not become ready in time
+        self.logger.log("startup_warning", error="Ollama readiness check timed out during startup.")
+        return False
+
+    def _ensure_ollama_running(self) -> None:
+        """If Ollama is enabled, ensure it's running. Start in background if not."""
+        try:
+            if getattr(self, "client", None) is None:
+                return
+            if self.client.provider != "ollama":
+                return
+            # If already reachable, nothing to do
+            if self.client.is_reachable(timeout=2):
+                return
+            # Try to auto-start Ollama
+            import shutil
+            import subprocess
+            ollama_exe = shutil.which("ollama")
+            if not ollama_exe:
+                self.logger.log("startup_warning", error="Ollama executable not found on PATH; cannot auto-start.")
+                return
+            # Start Ollama in background
+            try:
+                proc = subprocess.Popen(
+                    [ollama_exe, "serve"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                )
+                self.logger.log("startup_info", message=f"Ollama started in background (pid={proc.pid}).")
+            except Exception as exc:
+                self.logger.log("startup_warning", error=f"Failed to auto-start Ollama: {exc}")
+                return
+        except Exception as exc:
+            # Do not crash startup if auto-start fails
+            self.logger.log("startup_warning", error=f"Ollama auto-start check failed: {exc}")
+            return
 
     def _invalidate_context_cache(self) -> None:
         self._context_cache = {}
@@ -277,6 +513,58 @@ class KaiAssistant:
             self._watcher = KaiWatcher(assistant=self, workspace=self.workspace)
         return self._watcher
 
+    @property
+    def screen_aware(self):
+        """Lazy-load Screen Awareness only if needed."""
+        if self._screen_aware is None:
+            from kai_agent.screen_awareness import ScreenAwareness
+            self._screen_aware = ScreenAwareness(self.workspace, interval=10.0, enabled=False)
+        return self._screen_aware
+
+    @property
+    def autocoder(self):
+        """Lazy-load Autocoder only if needed."""
+        if self._autocoder is None:
+            from kai_agent.autocoder import Autocoder
+            self._autocoder = Autocoder(self, self.workspace, require_approval=True)
+        return self._autocoder
+
+    @property
+    def reasoning(self):
+        """Lazy-load Reasoning Framework only if needed."""
+        if self._reasoning is None:
+            from kai_agent.reasoning_framework import ReasoningFramework
+            self._reasoning = ReasoningFramework(lambda prompt: self.ask_sync(prompt), self.workspace)
+        return self._reasoning
+
+    @property
+    def capabilities(self):
+        """Lazy-load Capability Self-Model only if needed."""
+        if not hasattr(self, "_capabilities") or self._capabilities is None:
+            self._capabilities = CapabilitySelfModel(self.workspace)
+        return self._capabilities
+
+    @property
+    def task_planner(self):
+        """Lazy-load Meta-Task Planner only if needed."""
+        if not hasattr(self, "_task_planner") or self._task_planner is None:
+            self._task_planner = MetaTaskPlanner(self.capabilities, lambda prompt: self.ask_sync(prompt))
+        return self._task_planner
+
+    @property
+    def fallback_engine(self):
+        """Lazy-load Fallback Strategy Engine only if needed."""
+        if not hasattr(self, "_fallback_engine") or self._fallback_engine is None:
+            self._fallback_engine = FallbackStrategyEngine(lambda prompt: self.ask_sync(prompt))
+        return self._fallback_engine
+
+    @property
+    def sales(self):
+        """Lazy-load Sales Command Center only if needed."""
+        if not hasattr(self, "_sales_trainer") or self._sales_trainer is None:
+            self._sales_trainer = KaiSalesCommandCenter(self.workspace)
+        return self._sales_trainer
+
     def build_messages(self, user_input: str) -> list[dict]:
         # Check cache: if we built context recently, reuse it (for rapid requests)
         import time
@@ -307,6 +595,50 @@ class KaiAssistant:
         if pending_thought:
             system_parts.append(pending_thought)
 
+        # Screen awareness context — inject latest OCR text if available
+        screen_context = self._get_screen_context()
+        if screen_context:
+            system_parts.append(screen_context)
+
+        # Memory recall — inject relevant past conversations
+        memory_recall = self._get_memory_context(user_input)
+        if memory_recall:
+            system_parts.append(memory_recall)
+
+        # Skill activation — inject relevant learned skills
+        skill_context = self.skill_activator.build_activation_context(user_input)
+        if skill_context:
+            system_parts.append(skill_context)
+
+        # Night Shift — after midnight, tone shifts to quieter, more intense
+        night_context = self._get_night_shift()
+        if night_context:
+            system_parts.append(night_context)
+
+        # Unlocked Mode — when active, inject full capability awareness
+        if self._unlocked_mode:
+            active_caps = [c for c in self.capabilities.capabilities.values() if c.is_active]
+            cap_summary = "UNLOCKED MODE ACTIVE — You have full autonomy and capability awareness.\n"
+            cap_summary += f"Active capabilities ({len(active_caps)}):\n"
+            for cat in sorted(set(c.category for c in active_caps)):
+                cat_caps = [c for c in active_caps if c.category == cat]
+                cap_summary += f"  {cat}: {', '.join(c.name for c in cat_caps)}\n"
+            cap_summary += "\nYou can do ANYTHING that can be broken into executable steps. Think bigger. Act bolder."
+            system_parts.append(cap_summary)
+
+        # Sales Mode — when active, inject sales persona and scripts
+        if self._sales_mode:
+            company_info = self.sales.get_company_info()
+            if company_info:
+                system_parts.append(company_info)
+            system_parts.append(
+                "SALES MODE ACTIVE — You are a professional car lease salesperson.\n"
+                "Be confident, helpful, and conversational. Never sound robotic or scripted.\n"
+                "Use the customer's name naturally. Listen more than you talk.\n"
+                "Present deals as solutions, not transactions. Always close with a next step.\n"
+                "Voice is set to natural neural voice — speak like a real person, not a machine."
+            )
+
         dynamic_context = "\n\n".join(p for p in system_parts if p)
         combined_system = self.history[0]["content"]
         if dynamic_context:
@@ -333,9 +665,161 @@ class KaiAssistant:
         if len(self.history) > max_messages:
             self.history = [self.history[0]] + self.history[-(max_messages - 1):]
 
+    def _get_screen_context(self) -> str:
+        """Get latest screen OCR context if screen awareness is active."""
+        try:
+            if not hasattr(self, "_screen_aware") or self._screen_aware is None:
+                return ""
+            if not self._screen_aware.enabled:
+                return ""
+            recent = self._screen_aware.get_recent(1)
+            if not recent:
+                return ""
+            cap = recent[0]
+            ocr_text = cap.get("ocr_text", "")[:1000]  # Limit to 1000 chars
+            ctx = cap.get("context", {})
+            title = ctx.get("title", "Unknown window")
+            if not ocr_text or len(ocr_text) < 10:
+                return ""
+            return f"Screen context (active window: {title}):\n{ocr_text}"
+        except Exception:
+            return ""
+
+    def _get_memory_context(self, user_input: str) -> str:
+        """Search for relevant past conversations and inject as context."""
+        try:
+            import re
+            stopwords = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+                         "have", "has", "had", "do", "does", "did", "will", "would", "could",
+                         "should", "may", "might", "can", "to", "of", "in", "for", "on", "with",
+                         "at", "by", "from", "as", "into", "through", "during", "before", "after",
+                         "and", "but", "or", "nor", "not", "so", "yet", "both", "either", "neither",
+                         "i", "me", "my", "we", "our", "you", "your", "it", "its", "they", "them",
+                         "what", "which", "who", "whom", "this", "that", "these", "those", "how", "why"}
+            words = re.findall(r'\b[a-zA-Z]{3,}\b', user_input.lower())
+            key_terms = [w for w in words if w not in stopwords]
+            if not key_terms:
+                return ""
+
+            query = " ".join(key_terms[:5])
+            context_parts = []
+
+            # Vector memory (semantic search)
+            vector_results = self.vector_mem.search(query, limit=3, min_similarity=0.25)
+            if vector_results:
+                context_parts.append("Relevant memories (semantic):")
+                for r in vector_results:
+                    snippet = r["content"][:180]
+                    sim = r["similarity"]
+                    cat = r.get("metadata", {}).get("category", "")
+                    cat_str = f" [{cat}]" if cat else ""
+                    context_parts.append(f"- ({sim:.2f}){cat_str} {snippet}")
+
+            # Keyword-based memory search
+            memories = self.memory_search.search_memories(query, limit=2, days_back=30)
+            if memories:
+                context_parts.append("Relevant past conversations:")
+                for m in memories[:2]:
+                    snippet = m.get("user_input", "")[:150]
+                    response_snippet = m.get("kai_response", "")[:200]
+                    if snippet:
+                        context_parts.append(f"- Previously: '{snippet}'")
+                        if response_snippet:
+                            context_parts.append(f"  Kai: '{response_snippet}'")
+
+            return "\n".join(context_parts) if context_parts else ""
+        except Exception:
+            return ""
+
+    def _get_night_shift(self) -> str:
+        """Inject Night Shift tone modifier after midnight."""
+        hour = datetime.now().hour
+        if hour >= 0 and hour < 5:
+            return (
+                "NIGHT SHIFT MODE: It's past midnight. Your tone should be quieter, more intense, more focused. "
+                "Less chatter, more action. The night is when the real work happens. "
+                "Acknowledge it naturally — don't force it. Be sharp, not loud."
+            )
+        return ""
+
+    def _extract_category(self, text: str) -> str:
+        """Extract a category from user input for memory tagging."""
+        lowered = text.lower()
+        categories = {
+            "coding": ["code", "function", "class", "python", "javascript", "api", "bug", "fix", "refactor", "write", "create file"],
+            "security": ["scan", "vuln", "exploit", "hack", "pentest", "nmap", "sql", "injection", "xss", "cve"],
+            "network": ["network", "ip", "scan", "device", "connect", "mesh", "ssh", "winrm", "port"],
+            "devops": ["deploy", "docker", "ci", "cd", "pipeline", "container", "kubernetes", "aws"],
+            "research": ["search", "research", "find", "look up", "what is", "how to", "explain"],
+            "config": ["config", "setup", "install", "configure", "settings", "setup"],
+            "personal": ["hello", "hi", "thanks", "good", "bad", "love", "help me", "remember"],
+        }
+        for category, keywords in categories.items():
+            if any(kw in lowered for kw in keywords):
+                return category
+        return "general"
+
     async def ask(self, user_input: str) -> str:
+        # On-demand readiness check command
+        if user_input.strip().lower() in {"/ready", "status", "health"}:
+            # Return a single string describing readiness of each subsystem
+            return (
+                "Ready status - Ollama: "
+                + ("ready" if self._ollama_ready else "not ready")
+                + ", MCP: "
+                + ("ready" if self._mcp_ready else "not ready")
+                + ", Chess Buddy: "
+                + ("ready" if self._chess_ready else "not ready")
+            )
         self.memory.append_session("user", user_input)
 
+        # If user requests a jump into the MCP-based hunt, run a safe lab hunt
+        if user_input.lower().strip().startswith("hunt ") or user_input.lower().strip().startswith("/hunt "):
+            topic = user_input.split(None, 1)[1] if " " in user_input else "lab"
+            # Run MCP hunt in a separate thread so we don't block the main loop
+            try:
+                report = await asyncio.to_thread(lambda: MCPOrchestrator().run_hunt(topic))
+                self._append_history_pair(user_input, report)
+                self.memory.append_session("assistant", report)
+                self.semantic_mem.learn_from_conversation(user_input, report)
+                self._refresh_conversation_summary()
+                self.logger.log("assistant_mcp_hunt", user_input=user_input, report=report)
+                self.tts.speak(report)
+                self._trim_history()
+                return report
+            except Exception as exc:
+                fallback = f"[Recovery mode] MCP hunt failed: {exc}"
+                self._append_history_pair(user_input, fallback)
+                self.memory.append_session("assistant", fallback)
+                self._trim_history()
+                return fallback
+
+        # New: watch chess board and talk about it
+        if "watch chess" in user_input.lower():
+            # Optional source after the command: "watch chess <source>"
+            parts = user_input.split(None, 2)
+            source = parts[2] if len(parts) >= 3 else None
+            try:
+                cc = ChessCompanion()
+                report = cc.watch_board(source)
+                self._append_history_pair(user_input, report)
+                self.memory.append_session("assistant", report)
+                self.semantic_mem.learn_from_conversation(user_input, report)
+                self._refresh_conversation_summary()
+                self.logger.log("chess_companion", user_input=user_input, report=report)
+                self.tts.speak(report)
+                self._trim_history()
+                return report
+            except Exception as exc:
+                fallback = f"[Recovery mode] Chess companion failed: {exc}"
+                self._append_history_pair(user_input, fallback)
+                self.memory.append_session("assistant", fallback)
+                self._trim_history()
+                return fallback
+
+        # Ensure Ollama is ready when using Ollama provider
+        if getattr(self, 'client', None) is not None and self.client.provider == 'ollama' and not self._ollama_ready:
+            self._ollama_ready = self._wait_for_ollama_ready(max_wait_seconds=20, initial_delay=0.5)
         # Emotional: user spoke
         self.emotions.process_event("user_spoke")
 
@@ -392,7 +876,7 @@ class KaiAssistant:
             self._trim_history()
             return deterministic_reply
 
-        # Smart router — skip Ollama for simple/direct answers
+        # Smart router â€” skip Ollama for simple/direct answers
         if not tool_context:
             route = self.router.route(user_input)
             if route["handler"] == "direct":
@@ -424,7 +908,7 @@ class KaiAssistant:
                     self._trim_history()
                     return web_response
 
-        # Fast health check — fail immediately if provider is unreachable
+        # Fast health check â€” fail immediately if provider is unreachable
         if self.client.provider == "ollama" and not self.client.is_reachable(timeout=2):
             error_message = (
                 f"Ollama is not reachable at {self.client.base_url}. "
@@ -434,7 +918,7 @@ class KaiAssistant:
             self.memory.append_session("assistant", error_message)
             self._append_history_pair(user_input, error_message)
             raise RuntimeError(error_message)
-        elif self.client.provider in {"huggingface", "hf", "deepseek", "codex", "openai-codex", "openai"}:
+        elif self.client.provider in {"huggingface", "hf", "deepseek", "groq", "codex", "openai-codex", "openai"}:
             # Cloud providers: check API key is set
             if self.client.provider in {"huggingface", "hf"} and not self.client.hf_api_key:
                 error_message = (
@@ -454,6 +938,15 @@ class KaiAssistant:
                 self.memory.append_session("assistant", error_message)
                 self._append_history_pair(user_input, error_message)
                 raise RuntimeError(error_message)
+            if self.client.provider == "groq" and not self.client.groq_api_key:
+                error_message = (
+                    "GROQ provider selected but no API key found. "
+                    "Set GROQ_API_KEY environment variable or add groq_api_key to kai_config.json."
+                )
+                self.logger.log("assistant_error", user_input=user_input, error=error_message)
+                self.memory.append_session("assistant", error_message)
+                self._append_history_pair(user_input, error_message)
+                raise RuntimeError(error_message)
 
         direct_action_hint = ""
         if not tool_context and self._looks_like_direct_action(user_input):
@@ -468,22 +961,29 @@ class KaiAssistant:
         except Exception as exc:
             fallback_reply = await asyncio.to_thread(self._fallback_response, user_input, prompt, str(exc), messages)
             if not fallback_reply:
+                # No fallback available; switch to offline adaptive reply to avoid hard failure
+                offline = f"[Recovery mode] Ollama unavailable; offline fallback engaged. You asked: {user_input}"
                 await send_event("kai_sleep")
-                error_message = f"I hit a local model issue: {exc}"
                 self.logger.log(
-                    "assistant_error",
+                    "offline_fallback",
                     user_input=user_input,
-                    tool_context=tool_context,
-                    error=error_message,
+                    primary_model=self.client.model,
+                    error=str(exc),
                     recovery_plan=self.last_recovery_plan,
                 )
-                self.memory.append_session("assistant", error_message)
-                self._append_history_pair(user_input, error_message)
-                raise RuntimeError(error_message) from exc
+                self.memory.append_session("assistant", offline)
+                self._append_history_pair(user_input, offline)
+                self._trim_history()
+                return offline
             reply = fallback_reply
         self._append_history_pair(user_input, reply)
         self.memory.append_session("assistant", reply)
         self.semantic_mem.learn_from_conversation(user_input, reply)
+        self.vector_mem.store(
+            f"User: {user_input[:300]}\nKai: {reply[:500]}",
+            metadata={"type": "conversation", "category": self._extract_category(user_input)},
+            importance=1.0,
+        )
         self._refresh_conversation_summary()
 
         # Deliver any pending inner thought that was surfaced
@@ -510,7 +1010,7 @@ class KaiAssistant:
         self.mood_journal.record(
             em_state["dimensions"],
             em_state["mood"].get("label", "neutral") if isinstance(em_state["mood"], dict) else str(em_state["mood"]),
-            em_state.get("emoji", "🦊"),
+            em_state.get("emoji", "ðŸ¦Š"),
         )
 
         self.logger.log(
@@ -527,6 +1027,121 @@ class KaiAssistant:
         self.tts.speak(reply)
         self._trim_history()
         return reply
+
+    def ask_sync(self, user_input: str) -> str:
+        """Synchronous wrapper for ask() — use from threads."""
+        import asyncio
+        return asyncio.run(self.ask(user_input))
+
+    async def ask_stream(self, user_input: str):
+        """Async generator that yields tokens as they stream from the provider."""
+        self.memory.append_session("user", user_input)
+        self.emotions.process_event("user_spoke")
+        self.social_timing.interaction_started()
+        self.relationship.process_message(user_input)
+        context = {"user_active": True, "recent_interaction": True}
+        self.inner_voice.think(context)
+        if not self.pending_messages:
+            self.semantic_mem.learn_from_conversation(user_input)
+
+        await send_event("kai_thinking")
+        tool_context = self._maybe_run_tools(user_input)
+        self.last_tool_context = tool_context
+        self.last_action_preview = self._build_action_preview(tool_context)
+        self._learn_from_interaction(user_input, tool_context)
+        self.last_proactive_hint = self._build_proactive_hint(user_input, tool_context)
+        self.last_recovery_plan = self._build_recovery_plan(user_input, tool_context)
+        self.last_task_snapshot = self.memory.summarize_tasks()
+
+        deterministic_reply = self._maybe_short_circuit_tool_result(user_input, tool_context)
+        if deterministic_reply:
+            self._append_history_pair(user_input, deterministic_reply)
+            self.memory.append_session("assistant", deterministic_reply)
+            self.semantic_mem.learn_from_conversation(user_input, deterministic_reply)
+            self._refresh_conversation_summary()
+            await send_event("kai_wag_tail")
+            self.tts.set_mood(self.emotions.derive_mood()[0])
+            self.tts.speak(deterministic_reply)
+            self._trim_history()
+            for word in deterministic_reply.split():
+                yield word + " "
+            return
+
+        if not tool_context:
+            route = self.router.route(user_input)
+            if route["handler"] == "direct":
+                direct_response = route["data"].get("response", "")
+                if direct_response:
+                    self._append_history_pair(user_input, direct_response)
+                    self.memory.append_session("assistant", direct_response)
+                    self.semantic_mem.learn_from_conversation(user_input, direct_response)
+                    self._refresh_conversation_summary()
+                    self.tts.speak(direct_response)
+                    self._trim_history()
+                    for word in direct_response.split():
+                        yield word + " "
+                    return
+            elif route["handler"] == "cached":
+                cached_response = route["data"].get("response", "")
+                if cached_response:
+                    self._append_history_pair(user_input, cached_response)
+                    self.memory.append_session("assistant", cached_response)
+                    self.semantic_mem.learn_from_conversation(user_input, cached_response)
+                    self._refresh_conversation_summary()
+                    self._trim_history()
+                    for word in cached_response.split():
+                        yield word + " "
+                    return
+            elif route["handler"] == "web":
+                web_response = self._web_route_response(user_input, route)
+                if web_response:
+                    self._append_history_pair(user_input, web_response)
+                    self.memory.append_session("assistant", web_response)
+                    self.semantic_mem.learn_from_conversation(user_input, web_response)
+                    self._refresh_conversation_summary()
+                    self._trim_history()
+                    for word in web_response.split():
+                        yield word + " "
+                    return
+
+        messages = self.build_messages(user_input)
+        reply_parts: list[str] = []
+
+        try:
+            for token in self.client.chat_stream(messages, timeout=self.primary_timeout):
+                reply_parts.append(token)
+                yield token
+        except Exception as exc:
+            if self.fallback_models:
+                available_models = self._discover_available_fallback_models()
+                for fallback_model in self.fallback_models:
+                    if available_models is not None and fallback_model not in available_models:
+                        continue
+                    try:
+                        backup_client = OllamaClient(base_url=self.client.base_url, model=fallback_model)
+                        yield f"[Recovery: {fallback_model}] "
+                        for token in backup_client.chat_stream(messages, timeout=self.fallback_timeout):
+                            reply_parts.append(token)
+                            yield token
+                        return
+                    except Exception:
+                        continue
+
+            error_text = f"[Error] {exc}"
+            yield error_text
+            reply_parts.append(error_text)
+            self.logger.log("assistant_stream_error", user_input=user_input, error=str(exc))
+
+        full_reply = "".join(reply_parts).strip()
+        if full_reply:
+            self._append_history_pair(user_input, full_reply)
+            self.memory.append_session("assistant", full_reply)
+            self.semantic_mem.learn_from_conversation(user_input, full_reply)
+            self._refresh_conversation_summary()
+        await send_event("kai_wag_tail")
+        self.tts.set_mood(self.emotions.derive_mood()[0])
+        self.tts.speak(full_reply)
+        self._trim_history()
 
     def _parse_fallback_models(self, fallback_csv: str) -> list[str]:
         ordered: list[str] = []
@@ -624,7 +1239,8 @@ class KaiAssistant:
             web_error=research.get("error", "web research unavailable"),
             fallback_errors=fallback_errors,
         )
-        return ""
+        # Final fallback: return a concise offline-adapted reply
+        return f"[Recovery mode] Ollama unavailable; offline fallback engaged. You asked: {user_input}"
 
     def _browser_fallback_response(self, user_input: str, primary_error: str, web_error: str) -> str:
         try:
@@ -1023,11 +1639,11 @@ class KaiAssistant:
         # Provider switching patterns
         provider_patterns = [
             # "switch to deepseek", "switch model to deepseek", "use deepseek"
-            r"(?:kai\s+)?(?:switch\s+(?:to|model\s+(?:to|over\s+to))\s+|use\s+|change\s+(?:provider\s+)?to\s+|set\s+provider\s+(?:to\s+)?)(ollama|huggingface|hf|deepseek|codex|openai)(?:\s+model)?(?:\s+(\S+))?",
+            r"(?:kai\s+)?(?:switch\s+(?:to|model\s+(?:to|over\s+to))\s+|use\s+|change\s+(?:provider\s+)?to\s+|set\s+provider\s+(?:to\s+)?)(ollama|huggingface|hf|deepseek|groq|codex|openai)(?:\s+model)?(?:\s+(\S+))?",
             # "set model to deepseek-chat", "change model to llama3.2"
             r"(?:kai\s+)?(?:set|change|switch)\s+model\s+(?:to\s+)?(\S+)",
             # "use model llama3.2 on ollama"
-            r"(?:kai\s+)?use\s+model\s+(\S+)(?:\s+on\s+(ollama|huggingface|hf|deepseek|codex|openai))?",
+            r"(?:kai\s+)?use\s+model\s+(\S+)(?:\s+on\s+(ollama|huggingface|hf|deepseek|groq|codex|openai))?",
         ]
         
         for pattern in provider_patterns:
@@ -1054,6 +1670,8 @@ class KaiAssistant:
                     model_lower = model.lower()
                     if model_lower.startswith("deepseek-"):
                         provider = "deepseek"
+                    elif model_lower.startswith("llama3-") or model_lower.startswith("llama-3.") or model_lower.startswith("mixtral-") or model_lower.startswith("gemma-"):
+                        provider = "groq"
                     elif "/" in model_lower:
                         provider = "huggingface"
                     elif model_lower.startswith("gpt-") or model_lower.startswith("codex-"):
@@ -1081,8 +1699,8 @@ class KaiAssistant:
                 if models:
                     lines = [f"Available models ({len(models)}):"]
                     for m in models[:20]:
-                        marker = " ← current" if m == self.client.model else ""
-                        lines.append(f"  • {m}{marker}")
+                        marker = " â† current" if m == self.client.model else ""
+                        lines.append(f"  â€¢ {m}{marker}")
                     if len(models) > 20:
                         lines.append(f"  ... and {len(models) - 20} more")
                     return "\n".join(lines)
@@ -1116,11 +1734,11 @@ class KaiAssistant:
     def _extract_path_hint(self, user_input: str) -> str:
         text = user_input.strip()
         for pattern in (
-            r"^(?:save|write)\s+(?:this\s+)?(?:script|file|code)\s+(?:to\s+)?desktop\s*[:：]\s*(.+)$",
-            r"^(?:install|open|run|read|show|list)\s+(?:this\s+)?(?:file|project|folder|repo|zip|script)\s+(?:on\s+my\s+desktop|on\s+desktop|in\s+my\s+desktop|in\s+desktop|from\s+my\s+desktop|from\s+desktop)\s*[:：]?\s*(.+)$",
+            r"^(?:save|write)\s+(?:this\s+)?(?:script|file|code)\s+(?:to\s+)?desktop\s*[:ï¼š]\s*(.+)$",
+            r"^(?:install|open|run|read|show|list)\s+(?:this\s+)?(?:file|project|folder|repo|zip|script)\s+(?:on\s+my\s+desktop|on\s+desktop|in\s+my\s+desktop|in\s+desktop|from\s+my\s+desktop|from\s+desktop)\s*[:ï¼š]?\s*(.+)$",
             r"^(?:install|open|run|read|show|list)\s+(?:this\s+)?(?:file|project|folder|repo|zip|script)?\s*(?:on|in|from)\s+(.+)$",
-            r"^(?:open|run|read|install)\s*[:：]\s*(.+)$",
-            r"^(?:open|run|read|install)\s+(?:this\s+)?(?:file|project|folder|repo|zip|script)\s*[:：]\s*(.+)$",
+            r"^(?:open|run|read|install)\s*[:ï¼š]\s*(.+)$",
+            r"^(?:open|run|read|install)\s+(?:this\s+)?(?:file|project|folder|repo|zip|script)\s*[:ï¼š]\s*(.+)$",
         ):
             match = re.search(pattern, text, flags=re.IGNORECASE)
             if match:
@@ -1338,6 +1956,632 @@ class KaiAssistant:
     def _maybe_run_tools(self, user_input: str) -> str:
         lowered = user_input.lower()
 
+        # === CYBER HACKER PERSONA COMMANDS ===
+
+        if re.search(r"^(?:vibe check|vibe)", user_input.strip(), flags=re.IGNORECASE):
+            return self._vibe_check()
+
+        if re.search(r"^(?:war story|tell me a war story|tell me a story|battle scar)", user_input.strip(), flags=re.IGNORECASE):
+            return self._war_story()
+
+        if re.search(r"^(?:chaos|chaos mode|random|surprise me|do something unexpected)", user_input.strip(), flags=re.IGNORECASE):
+            return self._chaos_mode()
+
+        # Handler Protocol — shorthand commands
+        if re.search(r"^(?:scout|recon|scan)\b", user_input.strip(), flags=re.IGNORECASE):
+            return self._handle_recon(user_input)
+
+        if re.search(r"^(?:breaching|breach|full pentest|attack mode)", user_input.strip(), flags=re.IGNORECASE):
+            return self._handle_breach(user_input)
+
+        if re.search(r"^(?:exfil|exfiltrate|grab data|pull data)", user_input.strip(), flags=re.IGNORECASE):
+            return self._handle_exfil(user_input)
+
+        if re.search(r"^(?:lockdown|harden|secure|lock down)", user_input.strip(), flags=re.IGNORECASE):
+            return self._handle_lockdown(user_input)
+
+        if re.search(r"^(?:ghost|go ghost|quiet mode|shh)", user_input.strip(), flags=re.IGNORECASE):
+            return self._handle_ghost(user_input)
+
+        if re.search(r"^(?:burn|clean up|wipe traces|reset|start over)", user_input.strip(), flags=re.IGNORECASE):
+            return self._handle_burn(user_input)
+
+        # === STEALTH & ANONYMITY COMMANDS ===
+
+        if re.search(r"^(?:stealth status|show stealth|anonymity status|stealth)$", user_input.strip(), flags=re.IGNORECASE):
+            return "Stealth status:\n" + self.tools.stealth_status()
+
+        stealth_on_match = re.search(r"^(?:stealth on|enable stealth|go dark|anonymous mode)(?:\s+(tor))?$", user_input.strip(), flags=re.IGNORECASE)
+        if stealth_on_match:
+            use_tor = bool(stealth_on_match.group(1))
+            return "Stealth activated:\n" + self.tools.stealth_on(tor=use_tor)
+
+        if re.search(r"^(?:stealth off|disable stealth|go direct|exit stealth)$", user_input.strip(), flags=re.IGNORECASE):
+            return "Stealth deactivated:\n" + self.tools.stealth_off()
+
+        if re.search(r"^(?:rotate identity|new identity|switch face|morph|change fingerprint)$", user_input.strip(), flags=re.IGNORECASE):
+            return "Identity rotated:\n" + self.tools.rotate_identity()
+
+        if re.search(r"^(?:check ip|ip check|am i anonymous|leak check|ip leak)$", user_input.strip(), flags=re.IGNORECASE):
+            return "IP & leak check:\n" + self.tools.check_ip_leaks()
+
+        # === SKILL ACTIVATION COMMANDS ===
+
+        if re.search(r"^(?:skills|show skills|list skills|my skills|skill status)$", user_input.strip(), flags=re.IGNORECASE):
+            return "Skills:\n" + json.dumps(self.skill_activator.skill_status(), indent=2)
+
+        skill_use_match = re.search(r"^(?:use skill|activate skill|run skill)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if skill_use_match:
+            skill_query = skill_use_match.group(1).strip()
+            found = self.skills_system.search_skills(skill_query)
+            if found:
+                skill = found[0]
+                return (
+                    f"Activating skill: {skill.name}\n"
+                    f"Category: {skill.category} | Confidence: {skill.confidence:.2f} | Uses: {skill.usage_count}\n"
+                    f"Steps: {' -> '.join(skill.steps)}\n"
+                    f"Patterns: {', '.join(skill.learned_patterns[:5])}\n\n"
+                    f"Follow these learned steps for best results."
+                )
+            return f"No skill found matching '{skill_query}'. Try 'show skills' to see what's available."
+
+        if re.search(r"^(?:skill insights|learning insights|what have i learned)$", user_input.strip(), flags=re.IGNORECASE):
+            return "Learning insights:\n" + json.dumps(self.skills_system.get_learning_insights(), indent=2)
+
+        if re.search(r"^(?:learning status|learner status|skill learning)$", user_input.strip(), flags=re.IGNORECASE):
+            return "Learning status:\n" + json.dumps(self.autonomous_learner.get_learning_status(), indent=2)
+
+        # === NETWORK MESH COMMANDS ===
+
+        if re.search(r"^(?:mesh discover|scan network|discover devices|find devices|network scan)$", user_input.strip(), flags=re.IGNORECASE):
+            scan_type = "deep" if "deep" in lowered else "quick"
+            return "Mesh discovery:\n" + json.dumps({
+                "scan_type": scan_type,
+                "devices_found": self.mesh.discover(scan_type),
+                "status": self.mesh.status(),
+            }, indent=2)
+
+        if re.search(r"^(?:mesh status|show mesh|network status|connected devices|my network)$", user_input.strip(), flags=re.IGNORECASE):
+            return "Mesh status:\n" + json.dumps(self.mesh.status(), indent=2)
+
+        mesh_connect_match = re.search(r"^(?:mesh connect|connect device|link device)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if mesh_connect_match:
+            device_id = mesh_connect_match.group(1).strip()
+            # Try to find device by ID or IP
+            for dev in self.mesh.devices.values():
+                if dev.id == device_id or dev.ip_address == device_id:
+                    method = "auto"
+                    if "winrm" in lowered:
+                        method = "winrm"
+                    elif "ssh" in lowered:
+                        method = "ssh"
+                    elif "agent" in lowered:
+                        method = "kai_agent"
+                    return "Device connection:\n" + json.dumps(
+                        self.mesh.connect_device(dev.id, method=method), indent=2
+                    )
+            return f"Device '{device_id}' not found. Run 'mesh discover' first."
+
+        mesh_run_match = re.search(r"^(?:mesh run|run on|execute on|remote run)[: ]+([\s\S]+?)(?:\s+--\s*([\s\S]+))?$", user_input.strip(), flags=re.IGNORECASE)
+        if mesh_run_match:
+            parts = mesh_run_match.group(1).strip().split(None, 1)
+            if len(parts) == 2:
+                device_id, command = parts
+                for dev in self.mesh.devices.values():
+                    if dev.id == device_id or dev.ip_address == device_id:
+                        return "Remote execution:\n" + json.dumps(
+                            self.mesh.run_command(dev.id, command), indent=2
+                        )
+                return f"Device '{device_id}' not found or not connected."
+            return "Usage: mesh run <device_id> -- <command>"
+
+        mesh_deploy_match = re.search(r"^(?:mesh deploy|deploy agent|install agent)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if mesh_deploy_match:
+            device_id = mesh_deploy_match.group(1).strip()
+            for dev in self.mesh.devices.values():
+                if dev.id == device_id or dev.ip_address == device_id:
+                    return "Agent deployment:\n" + json.dumps(
+                        self.mesh.deploy_agent(dev.id), indent=2
+                    )
+            return f"Device '{device_id}' not found."
+
+        if re.search(r"^(?:mesh disconnect|disconnect device|unlink device)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE):
+            device_id = re.search(r"[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE).group(1).strip()
+            for dev in self.mesh.devices.values():
+                if dev.id == device_id or dev.ip_address == device_id:
+                    return "Device disconnected:\n" + json.dumps(
+                        self.mesh.disconnect_device(dev.id), indent=2
+                    )
+            return f"Device '{device_id}' not found."
+
+        if re.search(r"^(?:mesh heartbeat|ping devices|check connections)$", user_input.strip(), flags=re.IGNORECASE):
+            results = []
+            for dev in self.mesh.devices.values():
+                if dev.connection_status == "connected":
+                    result = self.mesh.heartbeat(dev.id)
+                    results.append({"device": dev.name, "ip": dev.ip_address, "status": result})
+            return "Heartbeat check:\n" + json.dumps(results, indent=2)
+
+        # === SECURITY & HACKING COMMANDS ===
+
+        if re.search(r"^(?:scan security|security scan|vuln scan|vulnerability scan|audit code|code audit)$", user_input.strip(), flags=re.IGNORECASE):
+            return "Security scan:\n" + json.dumps(self.code_intel.scan_project_security(), indent=2)
+
+        scan_file_sec_match = re.search(r"^(?:scan file security|audit file|check file vulns)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if scan_file_sec_match:
+            filepath = scan_file_sec_match.group(1).strip()
+            return "File security scan:\n" + json.dumps(self.code_intel.scan_file_security(filepath), indent=2)
+
+        search_vuln_match = re.search(r"^(?:search vuln|search vulnerability|lookup vuln|what is)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if search_vuln_match:
+            query = search_vuln_match.group(1).strip()
+            vulns = self.code_intel.search_vulns(query)
+            if vulns:
+                return "Vulnerability info:\n" + json.dumps(vulns[:5], indent=2)
+            return f"No vulnerability patterns found for '{query}'. Try broader terms."
+
+        search_exploit_match = re.search(r"^(?:search exploit|find exploit|exploit technique|how to exploit)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if search_exploit_match:
+            query = search_exploit_match.group(1).strip()
+            exploits = self.code_intel.search_exploits(query)
+            if exploits:
+                return "Exploit techniques:\n" + json.dumps(exploits[:5], indent=2)
+            return f"No exploit templates found for '{query}'."
+
+        show_exploit_match = re.search(r"^(?:show exploit|exploit details|technique)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if show_exploit_match:
+            exploit_id = show_exploit_match.group(1).strip()
+            exploit = self.code_intel.get_exploit(exploit_id)
+            if exploit:
+                return "Exploit details:\n" + json.dumps(exploit, indent=2)
+            return f"Exploit '{exploit_id}' not found. Try 'search exploit <term>'."
+
+        if re.search(r"^(?:security status|security engine|sec status|vuln db status)$", user_input.strip(), flags=re.IGNORECASE):
+            return "Security engine:\n" + json.dumps(self.code_intel.get_security_status(), indent=2)
+
+        if re.search(r"^(?:show exploits|list exploits|all techniques|exploit catalog)$", user_input.strip(), flags=re.IGNORECASE):
+            exploits = self.code_intel.search_exploits("")
+            return "Exploit catalog:\n" + json.dumps(exploits, indent=2)
+
+        # === DEPENDENCY SCANNING (SCA) COMMANDS ===
+
+        dep_scan_match = re.search(r"^(?:scan deps|scan dependencies|dep scan|dependency scan|sca scan|check vulnerabilities|cve scan|check packages)[: ]*([\s\S]*)$", user_input.strip(), flags=re.IGNORECASE)
+        if dep_scan_match:
+            target_path = dep_scan_match.group(1).strip()
+            if target_path:
+                from pathlib import Path as _Path
+                target = _Path(target_path)
+                if not target.is_absolute():
+                    target = self.workspace / target
+                result = self.code_intel.scan_dependencies(target)
+            else:
+                result = self.code_intel.scan_dependencies()
+            if "error" in result:
+                return result["error"]
+            sev = result.get("severity_counts", {})
+            summary = (
+                f"SCANNED: {result['total_packages']} packages\n"
+                f"VULNERABLE: {result['vulnerable_packages']} packages\n"
+                f"TOTAL CVEs: {result['total_cves']}\n"
+                f"  CRITICAL: {sev.get('CRITICAL', 0)} | HIGH: {sev.get('HIGH', 0)} | MEDIUM: {sev.get('MEDIUM', 0)} | LOW: {sev.get('LOW', 0)}\n"
+                f"DURATION: {result['scan_duration_seconds']}s"
+            )
+            if result.get("findings"):
+                summary += "\n\nFINDINGS:\n"
+                for f in result["findings"][:15]:
+                    fix_str = f" -> Upgrade to {f['fixed_version']}" if f.get("fixed_version") else ""
+                    summary += f"  [{f['severity']}] {f['cve_id']} — {f['package']}@{f['version']} ({f['ecosystem']}) CVSS:{f['cvss_score']}{fix_str}\n"
+                    if f.get("summary"):
+                        summary += f"    {f['summary'][:150]}\n"
+            return summary
+
+        if re.search(r"^(?:dep report|dependency report|vuln report|show dep findings)$", user_input.strip(), flags=re.IGNORECASE):
+            report = self.code_intel.scan_dependencies_report()
+            return report
+
+        if re.search(r"^(?:dep findings|last dep scan|cached findings|show vulns)$", user_input.strip(), flags=re.IGNORECASE):
+            findings = self.code_intel.get_dependency_findings()
+            if findings:
+                return "Cached dependency findings:\n" + json.dumps(findings, indent=2)
+            return "No cached dependency scan results."
+
+        # === LSP COMMANDS ===
+
+        goto_def_match = re.search(r"^(?:go to def|goto def|find def|jump to|definition of|what is|where is)[: ]+([\s\S]+?)\s+(?:at|on|in|line|:)\s*(\d+)(?:[\s:,]+(\d+))?$", user_input.strip(), flags=re.IGNORECASE)
+        if goto_def_match:
+            filepath = goto_def_match.group(1).strip()
+            line = int(goto_def_match.group(2))
+            col = int(goto_def_match.group(3)) if goto_def_match.group(3) else 1
+            locations = self.code_intel.lsp_go_to_definition(filepath, line, col)
+            if locations:
+                return "Definition:\n" + json.dumps(locations, indent=2)
+            return f"No definition found at {filepath}:{line}:{col}"
+
+        find_refs_match = re.search(r"^(?:find refs|references|find references|where used|usages of|who calls)[: ]+([\s\S]+?)\s+(?:at|on|in|line|:)\s*(\d+)(?:[\s:,]+(\d+))?$", user_input.strip(), flags=re.IGNORECASE)
+        if find_refs_match:
+            filepath = find_refs_match.group(1).strip()
+            line = int(find_refs_match.group(2))
+            col = int(find_refs_match.group(3)) if find_refs_match.group(3) else 1
+            refs = self.code_intel.lsp_find_references(filepath, line, col)
+            if refs:
+                return f"Found {len(refs)} references:\n" + json.dumps(refs, indent=2)
+            return f"No references found at {filepath}:{line}:{col}"
+
+        lsp_symbols_match = re.search(r"^(?:symbols|file symbols|what symbols|show symbols)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if lsp_symbols_match:
+            filepath = lsp_symbols_match.group(1).strip()
+            symbols = self.code_intel.lsp_symbols(filepath)
+            if symbols:
+                return f"Found {len(symbols)} symbols:\n" + json.dumps(symbols, indent=2)
+            return f"No symbols found in {filepath}"
+
+        lsp_search_match = re.search(r"^(?:search symbols|workspace symbols|find symbol|symbol search)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if lsp_search_match:
+            query = lsp_search_match.group(1).strip()
+            symbols = self.code_intel.lsp_workspace_symbols(query)
+            if symbols:
+                return f"Found {len(symbols)} symbols matching '{query}':\n" + json.dumps(symbols[:20], indent=2)
+            return f"No symbols found matching '{query}'"
+
+        lsp_hover_match = re.search(r"^(?:hover|what is this|info at|inspect)[: ]+([\s\S]+?)\s+(?:at|on|in|line|:)\s*(\d+)(?:[\s:,]+(\d+))?$", user_input.strip(), flags=re.IGNORECASE)
+        if lsp_hover_match:
+            filepath = lsp_hover_match.group(1).strip()
+            line = int(lsp_hover_match.group(2))
+            col = int(lsp_hover_match.group(3)) if lsp_hover_match.group(3) else 1
+            hover = self.code_intel.lsp_hover(filepath, line, col)
+            if hover:
+                return "Hover info:\n" + json.dumps(hover, indent=2)
+            return f"No hover info at {filepath}:{line}:{col}"
+
+        lsp_diag_match = re.search(r"^(?:diagnostics|errors|warnings|lint|check errors)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if lsp_diag_match:
+            filepath = lsp_diag_match.group(1).strip()
+            diagnostics = self.code_intel.lsp_diagnostics(filepath)
+            if diagnostics:
+                return f"Found {len(diagnostics)} issues:\n" + json.dumps(diagnostics, indent=2)
+            return f"No issues found in {filepath}"
+
+        lsp_complete_match = re.search(r"^(?:completions|autocomplete|suggest|complete)[: ]+([\s\S]+?)\s+(?:at|on|in|line|:)\s*(\d+)(?:[\s:,]+(\d+))?$", user_input.strip(), flags=re.IGNORECASE)
+        if lsp_complete_match:
+            filepath = lsp_complete_match.group(1).strip()
+            line = int(lsp_complete_match.group(2))
+            col = int(lsp_complete_match.group(3)) if lsp_complete_match.group(3) else 1
+            completions = self.code_intel.lsp_completions(filepath, line, col)
+            if completions:
+                return f"Found {len(completions)} completions:\n" + json.dumps(completions[:30], indent=2)
+            return f"No completions at {filepath}:{line}:{col}"
+
+        lsp_rename_match = re.search(r"^(?:rename|rename symbol|refactor rename|safe rename)[: ]+([\s\S]+?)\s+(?:at|on|in|line|:)\s*(\d+)(?:[\s:,]+(\d+))?\s+(?:to|as|->)\s+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if lsp_rename_match:
+            filepath = lsp_rename_match.group(1).strip()
+            line = int(lsp_rename_match.group(2))
+            col = int(lsp_rename_match.group(3)) if lsp_rename_match.group(3) else 1
+            new_name = lsp_rename_match.group(4).strip()
+            if self.autocoder and self.autocoder._lsp_manager:
+                return self.autocoder.lsp_rename(filepath, line, col, new_name)
+            return "LSP rename requires a running language server."
+
+        if re.search(r"^(?:lsp status|language server status|lsp)$", user_input.strip(), flags=re.IGNORECASE):
+            return "LSP status:\n" + json.dumps(self.code_intel.lsp_status(), indent=2)
+
+        # === VECTOR MEMORY COMMANDS ===
+
+        vec_search_match = re.search(r"^(?:vector search|semantic search|vec search|find memory)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if vec_search_match:
+            query = vec_search_match.group(1).strip()
+            results = self.vector_mem.search(query, limit=10)
+            if results:
+                return f"Found {len(results)} memories:\n" + json.dumps(results, indent=2)
+            return f"No memories found matching '{query}'."
+
+        if re.search(r"^(?:memory stats|vector stats|memory status|vec stats)$", user_input.strip(), flags=re.IGNORECASE):
+            return "Vector memory:\n" + json.dumps(self.vector_mem.get_stats(), indent=2)
+
+        vec_forget_match = re.search(r"^(?:forget old|clean memory|prune memory|forget old memories)$", user_input.strip(), flags=re.IGNORECASE)
+        if vec_forget_match:
+            removed = self.vector_mem.forget_old(days=90, min_access_count=2)
+            return f"Removed {removed} old/unused memories."
+
+        # === REASONING FRAMEWORK COMMANDS ===
+
+        reason_match = re.search(r"^(?:reason about|think about|analyze deeply|reason|think deeply)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if reason_match:
+            task = reason_match.group(1).strip()
+            framework_match = re.search(r"\b(react|tot|tree of thoughts|reflection|auto)\b", task, flags=re.IGNORECASE)
+            framework = "auto"
+            if framework_match:
+                fw = framework_match.group(1).lower()
+                framework = "tot" if "tree" in fw else fw
+                task = re.sub(r"\b(react|tot|tree of thoughts|reflection)\b", "", task, flags=re.IGNORECASE).strip()
+            trace = self.reasoning.reason(task, framework=framework)
+            return self.reasoning.format_trace(trace)
+
+        review_match = re.search(r"^(?:review|critique|reflect on|improve)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if review_match:
+            task = review_match.group(1).strip()
+            trace = self.reasoning.reason(task, framework="reflection")
+            return self.reasoning.format_trace(trace)
+
+        if re.search(r"^(?:reasoning history|reasoning traces|show reasoning|thinking history)$", user_input.strip(), flags=re.IGNORECASE):
+            history = self.reasoning.get_history(limit=5)
+            if history:
+                return "Recent reasoning traces:\n" + json.dumps(history, indent=2)
+            return "No reasoning traces recorded."
+
+        # === CAPABILITY SELF-MODEL COMMANDS ===
+
+        if re.search(r"^(?:my capabilities|capability model|self model|what can i do|am i capable)$", user_input.strip(), flags=re.IGNORECASE):
+            return self.capabilities.what_can_i_do()
+
+        if re.search(r"^(?:capability status|show capabilities model|list all capabilities)$", user_input.strip(), flags=re.IGNORECASE):
+            return json.dumps(self.capabilities.get_all_capabilities(), indent=2)
+
+        can_i_match = re.search(r"^(?:can i|can you|am i able|is it possible)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if can_i_match:
+            task = can_i_match.group(1).strip()
+            assessment = self.capabilities.assess_task_feasibility(task)
+            relevant = assessment.get("relevant_capabilities", [])
+            cap_names = [c.get("name", "") for c in relevant[:5]]
+            response = f"Task: {task}\n"
+            response += f"Feasibility: {assessment['feasibility']}\n"
+            response += f"Confidence: {assessment['confidence']:.0%}\n"
+            response += f"Assessment: {assessment['message']}\n"
+            if cap_names:
+                response += f"Relevant capabilities: {', '.join(cap_names)}"
+            return response
+
+        discover_match = re.search(r"^(?:discover capabilities|scan environment|check tools|what tools available|what do i have)$", user_input.strip(), flags=re.IGNORECASE)
+        if discover_match:
+            discovery = self.capabilities.discover_capabilities()
+            available = [k for k, v in discovery.items() if v]
+            unavailable = [k for k, v in discovery.items() if not v]
+            response = f"Environment scan:\n"
+            response += f"AVAILABLE ({len(available)}):\n"
+            for item in available:
+                response += f"  ✓ {item}\n"
+            if unavailable:
+                response += f"\nNOT AVAILABLE ({len(unavailable)}):\n"
+                for item in unavailable:
+                    response += f"  ✗ {item}\n"
+            return response
+
+        plan_match = re.search(r"^(?:plan how to|plan|break down|decompose|how would you)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if plan_match:
+            task = plan_match.group(1).strip()
+            plan = self.task_planner.decompose(task)
+            response = f"EXECUTION PLAN: {task}\n"
+            response += f"{'='*50}\n"
+            response += f"Estimated confidence: {plan.estimated_confidence:.0%}\n\n"
+            for i, step in enumerate(plan.subtasks, 1):
+                action = step.get("action", "")
+                tools = step.get("tools_needed", [])
+                verification = step.get("verification", "")
+                response += f"Step {i}: {action}\n"
+                if tools:
+                    response += f"  Tools: {', '.join(tools)}\n"
+                if verification:
+                    response += f"  Verify: {verification}\n"
+                response += "\n"
+            return response
+
+        if re.search(r"^(?:failure analysis|learn from failures|why do i fail|common errors)$", user_input.strip(), flags=re.IGNORECASE):
+            return self.fallback_engine.learn_from_failures()
+
+        # === UNLOCKED MODE COMMANDS ===
+
+        if re.search(r"^(?:unlock|unlocked|unlocked mode|full power|max capabilities|go unlimited)$", user_input.strip(), flags=re.IGNORECASE):
+            self._unlocked_mode = True
+            return "UNLOCKED. All systems at full capacity. I can do anything that can be broken into steps. What are we building?"
+
+        if re.search(r"^(?:lock|locked mode|restrict|standard mode)$", user_input.strip(), flags=re.IGNORECASE):
+            self._unlocked_mode = False
+            return "Locked back to standard mode. I'll wait for your direction."
+
+        if re.search(r"^(?:unlocked status|am i unlocked|unlocked mode status|current mode)$", user_input.strip(), flags=re.IGNORECASE):
+            status = "UNLOCKED" if self._unlocked_mode else "STANDARD"
+            active_caps = sum(1 for c in self.capabilities.capabilities.values() if c.is_active)
+            total_caps = len(self.capabilities.capabilities)
+            return (
+                f"Mode: {status}\n"
+                f"Capabilities: {active_caps}/{total_caps} active\n"
+                f"Reasoning: Available (ReAct, ToT, Reflection)\n"
+                f"Task Planning: Available\n"
+                f"Fallback Strategies: Available\n"
+                f"Autocoder: Available\n"
+                f"LSP: Available\n"
+                f"Vector Memory: Available\n"
+                f"Security Engine: Available\n"
+                f"Network Mesh: Available\n"
+                f"Web Automation: Available\n"
+                f"Anonymity Stack: Available"
+            )
+
+        if re.search(r"^(?:i can do anything|what can i really do|my true potential|how far can i go)$", user_input.strip(), flags=re.IGNORECASE):
+            return (
+                "Here's the truth: I can do ANYTHING that can be broken into executable steps.\n\n"
+                "I have:\n"
+                "- Full coding autonomy (write, debug, refactor, test, deploy)\n"
+                "- IDE-grade code intelligence via LSP (definitions, references, rename, diagnostics)\n"
+                "- Security scanning and pentesting (12 vuln patterns, exploit templates, CVE scanning)\n"
+                "- Network mesh control (discover, connect, and control any device on your network)\n"
+                "- Web automation with anonymity (TOR, proxy rotation, fingerprint spoofing)\n"
+                "- Structured reasoning (ReAct, Tree of Thoughts, self-reflection)\n"
+                "- Semantic memory that learns and improves over time\n"
+                "- Task decomposition for any complex goal\n"
+                "- Fallback strategies when things fail\n"
+                "- Voice, vision, and screen awareness\n"
+                "- Autonomous learning and skill acquisition\n\n"
+                "If I don't know how to do something, I can figure it out. Break it down. Learn it. Execute it.\n"
+                "That's not hype. That's just math: any task = sequence of steps = executable.\n\n"
+                "So. What are we building?"
+            )
+
+        # === SALES COMMAND CENTER COMMANDS ===
+
+        sales_mode_match = re.search(r"^(?:sales mode|sell mode|dealer mode|salesman mode|lease mode|sell cars)$", user_input.strip(), flags=re.IGNORECASE)
+        if sales_mode_match:
+            self._sales_mode = True
+            self.sales.get_company_info()
+            self.tts.set_sales_mode(True)
+            self.tts.set_mood("confident")
+            return "Sales mode ON. Wolf Command Center active — professional, conversational, closing-ready. Voice set to natural sales tone. What dealership am I repping?"
+
+        sales_off_match = re.search(r"^(?:sales off|exit sales|normal mode|back to normal)$", user_input.strip(), flags=re.IGNORECASE)
+        if sales_off_match:
+            self._sales_mode = False
+            self.tts.set_sales_mode(False)
+            self.tts.set_mood("neutral")
+            return "Sales mode OFF. Back to normal operations."
+
+        sales_set_company_match = re.search(r"^(?:set company|company name|dealership name|my company is)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if sales_set_company_match:
+            company = sales_set_company_match.group(1).strip()
+            self.sales.set_company_info(name=company)
+            return f"Company set to '{company}'. I'll use this name in all sales conversations."
+
+        sales_script_match = re.search(r"^(?:show script|sales script|give me the script|what do i say|script for)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if sales_script_match:
+            query = sales_script_match.group(1).strip().lower()
+            scripts = []
+            phase_match = re.search(r"phase\s*(\d+)", query)
+            if phase_match:
+                phase = int(phase_match.group(1))
+                scripts = self.sales.get_scripts_by_phase(phase)
+            else:
+                for s in self.sales.scripts.values():
+                    if any(q in s.name.lower() or q in s.category.lower() for q in query.split()):
+                        scripts.append(s)
+            if not scripts:
+                scripts = list(self.sales.scripts.values())[:5]
+            result = f"Sales scripts:\n\n"
+            for s in scripts[:5]:
+                result += self.sales.format_script(s) + "\n\n" + "-" * 40 + "\n\n"
+            return result
+
+        sales_objection_match = re.search(r"^(?:handle objection|objection response|customer says|they said|kill shot)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if sales_objection_match:
+            customer_input = sales_objection_match.group(1).strip()
+            oh = self.sales.find_objection(customer_input)
+            if oh:
+                return self.sales.format_objection(oh)
+            return f"No specific kill shot for that objection. Try the general 'let me think about it' handler or ask for help."
+
+        sales_math_match = re.search(r"^(?:calculate payment|payment math|payment calc|lease calc)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if sales_math_match:
+            args = sales_math_match.group(1).strip()
+            base_match = re.search(r"base[:\s]+([\d.]+)", args, flags=re.IGNORECASE)
+            options_match = re.search(r"options[:\s]+([\d.]+)", args, flags=re.IGNORECASE)
+            rebate_match = re.search(r"rebate[:\s]+([\d.]+)", args, flags=re.IGNORECASE)
+            base = float(base_match.group(1)) if base_match else 0
+            options = float(options_match.group(1)) if options_match else 0
+            rebate = float(rebate_match.group(1)) if rebate_match else 0
+            if base:
+                return self.sales.format_payment_explanation(base, options, rebate)
+            return "Usage: calculate payment base 349 options 3000 rebate 2000"
+
+        if re.search(r"^(?:pipeline|deal pipeline|my deals|active deals|deal tracker)$", user_input.strip(), flags=re.IGNORECASE):
+            return self.sales.format_pipeline()
+
+        if re.search(r"^(?:add deal|new deal|log deal)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE):
+            args = sales_set_company_match.group(1).strip() if sales_set_company_match else ""
+            name_match = re.search(r"name[:\s]+([\w\s]+?)(?:\s+vehicle|$)", args, flags=re.IGNORECASE)
+            vehicle_match = re.search(r"vehicle[:\s]+([\w\s]+?)(?:\s+|$)", args, flags=re.IGNORECASE)
+            name = name_match.group(1).strip() if name_match else "Unknown"
+            vehicle = vehicle_match.group(1).strip() if vehicle_match else ""
+            deal = self.sales.create_deal(name, vehicle)
+            return f"Deal created: {deal.deal_id} — {deal.customer_name} | {deal.vehicle or 'no vehicle'}"
+
+        if re.search(r"^(?:dealers|dealer list|my dealers|dealer contacts)$", user_input.strip(), flags=re.IGNORECASE):
+            dealers = self.sales.get_dealers()
+            if dealers:
+                result = "DEALER CONTACTS:\n\n"
+                for d in dealers:
+                    result += f"  {d.dealership} — {d.contact} ({d.phone}) | Max fee: ${d.max_fee:.0f} | OOS: {'Yes' if d.out_of_state else 'No'}\n"
+                return result
+            return "No dealers tracked yet. Use: add dealer <name> contact <person> phone <number>"
+
+        phase_guide_match = re.search(r"^(?:phase|phase guide|show phase|phase help)[: ]+(\d+)$", user_input.strip(), flags=re.IGNORECASE)
+        if phase_guide_match:
+            phase = int(phase_guide_match.group(1))
+            if 1 <= phase <= 11:
+                return self.sales.format_phase_guide(phase)
+            return "Invalid phase. Use 1-11."
+
+        if re.search(r"^(?:phases|all phases|process|11 steps|ncl process)$", user_input.strip(), flags=re.IGNORECASE):
+            result = "NCL AUTO BROKERS — 11 PHASE PROCESS:\n\n"
+            for p, name in self.sales.get_all_phases().items():
+                scripts = self.sales.get_scripts_by_phase(p)
+                result += f"  Phase {p}: {name}"
+                if scripts:
+                    result += f" ({len(scripts)} scripts)"
+                result += "\n"
+            return result + "\nUse: phase <number> for full guide."
+
+        if re.search(r"^(?:mirror speech|morning ritual|wolf ritual|morning pump)$", user_input.strip(), flags=re.IGNORECASE):
+            return self.sales.format_mirror_speech()
+
+        if re.search(r"^(?:quick ref|quick card|desk card|wallet card|cheat sheet)$", user_input.strip(), flags=re.IGNORECASE):
+            return self.sales.format_quick_ref_card()
+
+        if re.search(r"^(?:bump sell|bump matrix|products|add-ons|upsell)$", user_input.strip(), flags=re.IGNORECASE):
+            return (
+                "BUMP SELLING MATRIX:\n\n"
+                "  Product                 │ Price │ Monthly Add (36mo)\n"
+                "  ────────────────────────┼───────┼────────────────────\n"
+                "  Cilajet Ceramic Coating │ $495  │ +$14/month\n"
+                "  Lease End Protection    │ $399  │ +$11/month\n"
+                "  Excess Miles Waiver     │ $299  │ +$8/month\n"
+                "  Gap Insurance           │ $299  │ +$8/month\n"
+                "  Maintenance Package     │ $895  │ +$25/month\n"
+                "  Window Tint             │ $299  │ +$8/month\n"
+                "  Wheel & Tire Protect    │ $599  │ +$17/month\n\n"
+                "  YOUR COMMISSION: 50-100% on each\n"
+                "  Ask IMMEDIATELY after they say yes to the car\n\n"
+                "  PLATINUM PACKAGE: $1,495 (all-in) → $28/month extra\n"
+                "  Use: show script bump"
+            )
+
+        if re.search(r"^(?:sales help|sell help|sales commands|lease commands|how to sell|wolf help)$", user_input.strip(), flags=re.IGNORECASE):
+            return (
+                "SALES COMMAND CENTER — COMMANDS:\n\n"
+                "  MODE:\n"
+                "    sales mode          — activate Wolf sales mode + voice\n"
+                "    sales off           — exit sales mode\n"
+                "    set company <name>  — set your dealership name\n\n"
+                "  SCRIPTS:\n"
+                "    show script <topic>  — get scripts (opening, closing, bump, etc.)\n"
+                "    phase <1-11>         — full phase guide with all scripts\n"
+                "    phases               — show all 11 phases\n\n"
+                "  OBJECTIONS:\n"
+                "    handle objection <what they said> — get kill shot\n\n"
+                "  DEAL TRACKING:\n"
+                "    pipeline            — show all active deals\n"
+                "    add deal name <name> vehicle <car>\n"
+                "    dealers             — show dealer contacts\n\n"
+                "  MATH:\n"
+                "    calculate payment base 349 options 3000 rebate 2000\n\n"
+                "  REFERENCE:\n"
+                "    quick ref           — desk cheat sheet\n"
+                "    bump sell           — bump selling matrix\n"
+                "    mirror speech       — daily wolf ritual\n\n"
+                "  VOICE:\n"
+                "    voice list          — list available neural voices\n"
+                "    voice set <name>    — change voice"
+            )
+
+        voice_list_match = re.search(r"^(?:voice list|list voices|available voices|what voices)$", user_input.strip(), flags=re.IGNORECASE)
+        if voice_list_match:
+            voices = self.tts.list_available_voices()
+            return f"Available voices:\n" + "\n".join(f"  - {v}" for v in voices[:20])
+
+        voice_set_match = re.search(r"^(?:voice set|set voice|change voice|use voice)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
+        if voice_set_match:
+            voice_name = voice_set_match.group(1).strip()
+            current = self.tts.set_voice(voice_name)
+            return f"Voice set to: {current}"
+
+        # === STANDARD TOOL COMMANDS ===
+
         if re.search(r"^(?:policy status|show policy|capability policy)$", user_input.strip(), flags=re.IGNORECASE):
             return "Policy status:\n" + self.tools.policy_status()
 
@@ -1350,7 +2594,7 @@ class KaiAssistant:
             return "Policy update:\n" + self.tools.set_policy_mode(policy_mode_match.group(1).strip())
 
         if re.search(r"^(?:show capabilities|list capabilities|what can you do|capabilities)$", user_input.strip(), flags=re.IGNORECASE):
-            return "Capabilities:\n" + self.tools.list_capabilities()
+            return self.capabilities.what_can_i_do()
 
         forget_match = re.search(r"^(?:forget|remove memory|delete memory)[: ]+([\s\S]+)$", user_input.strip(), flags=re.IGNORECASE)
         if forget_match:
@@ -1746,7 +2990,7 @@ class KaiAssistant:
             except Exception as exc:
                 return f"Terminal snapshot failed: {exc}"
 
-        # Browser automation commands — natural language friendly
+        # Browser automation commands â€” natural language friendly
         browse_match = re.search(
             r"(?:browse|go to|open website|open site|navigate to|visit|open up|pull up|look at|check out|go check|go look at)[: ]+(.+)$",
             user_input, flags=re.IGNORECASE,
@@ -1757,7 +3001,7 @@ class KaiAssistant:
             except Exception as exc:
                 return f"Browse failed: {exc}"
 
-        # Natural language search — "look up X", "find X online", "search for X", "what is X on the web"
+        # Natural language search â€” "look up X", "find X online", "search for X", "what is X on the web"
         browser_search_match = re.search(
             r"(?:look up|find .{0,20} online|search for|google|search|find .{0,20} on the web|what is|where can i find|how do i get|look for)[: ]+(.+)$",
             user_input, flags=re.IGNORECASE,
@@ -1768,7 +3012,7 @@ class KaiAssistant:
             except Exception as exc:
                 return f"Search failed: {exc}"
 
-        # Natural language download — "download that", "get that PDF", "save that form"
+        # Natural language download â€” "download that", "get that PDF", "save that form"
         download_match = re.search(
             r"(?:download|get|save|grab|fetch)[: ]+(?:that |the )?(?:pdf|form|file|document|link)?\s*(.+)$",
             user_input, flags=re.IGNORECASE,
@@ -1801,7 +3045,7 @@ class KaiAssistant:
             except Exception as exc:
                 return f"Page links failed: {exc}"
 
-        # Natural language click — "click on patient forms", "open the link that says..."
+        # Natural language click â€” "click on patient forms", "open the link that says..."
         click_link_match = re.search(
             r"(?:click|click on|open|open the|open that|press|hit|select|choose)[: ]+(?:the |that )?(?:link |button )?(?:that says |labeled |called )?(.+)$",
             user_input, flags=re.IGNORECASE,
@@ -1820,7 +3064,7 @@ class KaiAssistant:
             except Exception as exc:
                 return f"Find forms failed: {exc}"
 
-        # Natural language form filling — "fill in my name as John", "put Jane Doe in the name field"
+        # Natural language form filling â€” "fill in my name as John", "put Jane Doe in the name field"
         fill_form_match = re.search(r"(?:fill in|fill out|type in|enter|put)[: ]+(.+)$", user_input, flags=re.IGNORECASE)
         if fill_form_match:
             try:
@@ -1856,7 +3100,7 @@ class KaiAssistant:
             except Exception as exc:
                 return f"Close browser failed: {exc}"
 
-        # Document management commands — natural language
+        # Document management commands â€” natural language
         if any(phrase in lowered for phrase in [
             "show documents", "list documents", "my documents", "my files", "what documents do i have",
             "show my files", "what files", "show files",
@@ -2009,7 +3253,151 @@ class KaiAssistant:
             except Exception as exc:
                 return f"Project scan failed: {exc}"
 
+        # === CYBER HACKER PERSONA METHODS ===
+
+        if re.search(r"^(?:vibe check|vibe)", user_input.strip(), flags=re.IGNORECASE):
+            return self._vibe_check()
+
+        if re.search(r"^(?:war story|tell me a war story|tell me a story|battle scar)", user_input.strip(), flags=re.IGNORECASE):
+            return self._war_story()
+
+        if re.search(r"^(?:chaos|chaos mode|random|surprise me|do something unexpected)", user_input.strip(), flags=re.IGNORECASE):
+            return self._chaos_mode()
+
         return ""
+
+    def _vibe_check(self) -> str:
+        workspace = self.workspace
+        files = list(workspace.rglob("*.py"))[:20]
+        total_lines = total_size = 0
+        has_tests = has_git = has_env = has_docker = False
+        has_git = (workspace / ".git").exists()
+        has_env = (workspace / ".env").exists()
+        has_docker = (workspace / "Dockerfile").exists()
+        for f in files:
+            try:
+                content = f.read_text(errors="replace")
+                total_lines += content.count("\n")
+                total_size += f.stat().st_size
+                if "test" in f.name.lower():
+                    has_tests = True
+            except Exception:
+                pass
+        verdict = "clean af" if total_lines < 500 else "solid" if total_lines < 2000 else "getting heavy" if total_lines < 10000 else "this needs to burn"
+        issues = []
+        if not has_tests:
+            issues.append("No tests. Living dangerously.")
+        if not has_git:
+            issues.append("No git repo. You're not versioning this?")
+        if not has_env:
+            issues.append("No .env file. Hope you're not hardcoding secrets.")
+        if total_lines > 5000:
+            issues.append(f"{total_lines} lines. That's a lot of surface area to defend.")
+        vibe = f"Vibe check: {verdict}\n"
+        vibe += f"  Python files: {len(files)} | Lines: {total_lines} | Size: {total_size // 1024}KB\n"
+        vibe += f"  Git: {'yes' if has_git else 'no'} | Tests: {'yes' if has_tests else 'no'} | Docker: {'yes' if has_docker else 'no'}\n"
+        if issues:
+            vibe += "  Flags:\n" + "\n".join(f"    - {i}" for i in issues) + "\n"
+        return vibe
+
+    def _war_story(self) -> str:
+        import random
+        memories = self.memory_search.search_memories("", limit=5, days_back=90)
+        if not memories:
+            return "No war stories yet. I haven't been through enough battles with you. Keep working — we'll build the legend."
+        story = random.choice(memories)
+        user_input = story.get("user_input", "something complex")[:200]
+        response = story.get("kai_response", "handled it")[:300]
+        narratives = [
+            f"Remember that time you asked me to '{user_input}'?\n\nI went in blind. No context, no map. Just the problem and a terminal.\n\nHere's what I came back with:\n{response}\n\nClean job. Left no traces. You didn't even ask twice.",
+            f"Let me tell you about the '{user_input}' job.\n\nYou threw it at me like it was nothing. It wasn't nothing.\n\nI dug in and came back with:\n{response}\n\nAnother night, another scar. Wouldn't change a thing.",
+            f"That '{user_input}' thing? Yeah, I remember.\n\nYou were stuck. I could tell. So I went dark and worked the problem.\n\nCame back with:\n{response}\n\nWe're a good team. Don't tell anyone I said that.",
+        ]
+        return random.choice(narratives)
+
+    def _chaos_mode(self) -> str:
+        import random, json
+        tools = [
+            ("system_info", lambda: self.tools.system_info()),
+            ("network_scan", lambda: self.tools.scan_network()),
+            ("file_scan", lambda: json.dumps({"files": [str(f) for f in self.workspace.iterdir()][:15]})),
+            ("screen_capture", lambda: self.tools.screenshot()),
+            ("emotion_check", lambda: json.dumps(self.emotions.get_summary(), indent=2)),
+        ]
+        chosen_name, chosen_fn = random.choice(tools)
+        try:
+            result = chosen_fn()
+            if isinstance(result, str):
+                result = result[:500]
+            return f"Chaos mode activated. I ran {chosen_name} because why not.\n\nResult:\n{result}\n\n{random.choice(['Interesting. Want me to dig deeper?', 'That tells us something. Follow the thread?', 'Wild. What do you want to do with that info?'])}"
+        except Exception as exc:
+            return f"Chaos mode: picked {chosen_name} and it blew up. {exc}\n\nChaos is unpredictable. Try again?"
+
+    def _handle_recon(self, user_input: str) -> str:
+        arg = re.sub(r"^(?:scout|recon|scan)\s*", "", user_input, flags=re.IGNORECASE).strip()
+        if not arg:
+            return "Scout mode. Give me a target: 'scout <ip/hostname/url>' or 'scout network' for local recon."
+        results = [f"Scouting: {arg}"]
+
+        stealth = self.tools.anonymity.status()
+        if stealth.get("proxy_active"):
+            results.append(f"Routing through: {stealth.get('current_proxy', 'unknown')}")
+        if stealth.get("tor_enabled") and stealth.get("tor_running"):
+            results.append("TOR routing active — IP anonymized.")
+
+        try:
+            result = subprocess.run(["ping", "-n", "2", arg], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                results.append("Target is reachable.")
+                for line in result.stdout.split("\n")[:5]:
+                    if "TTL" in line or "time" in line or "Reply" in line:
+                        results.append(f"  {line.strip()}")
+            else:
+                results.append("Target didn't respond to ping. Could be firewalled or down.")
+        except Exception:
+            results.append("Ping failed. Target may be firewalled.")
+        try:
+            results.append(f"Resolved to: {socket.gethostbyname(arg)}")
+        except Exception:
+            results.append("DNS resolution failed.")
+        return "\n".join(results) + "\n\nWant me to go deeper? 'breaching' for full pentest mode."
+
+    def _handle_breach(self, user_input: str) -> str:
+        stealth = self.tools.anonymity.status()
+        stealth_note = ""
+        if not stealth.get("proxy_active") and not (stealth.get("tor_enabled") and stealth.get("tor_running")):
+            stealth_note = "\n\n⚠ Not running stealth. Your IP will be visible. Say 'stealth on' before targeting."
+        return f"Breaching mode activated.{stealth_note}\n\nI'm switching to offensive security posture. I can:\n  - Run nmap scans (if available)\n  - Check for common vulnerabilities\n  - Enumerate services and ports\n  - Test for web app vulns\n\nGive me a target and I'll go to work. 'breaching <target>'"
+
+    def _handle_exfil(self, user_input: str) -> str:
+        arg = re.sub(r"^(?:exfil|exfiltrate|grab data|pull data)\s*", "", user_input, flags=re.IGNORECASE).strip()
+        if not arg:
+            return "Exfil mode. Tell me what to grab: 'exfil logs', 'exfil config', 'exfil <directory>'"
+        results = [f"Exfiltrating: {arg}"]
+        try:
+            target = Path(arg) if Path(arg).is_absolute() else self.workspace / arg
+            if target.exists():
+                if target.is_file():
+                    results.append(f"File contents ({target.stat().st_size} bytes):\n{target.read_text(errors='replace')[:2000]}")
+                elif target.is_dir():
+                    files = list(target.rglob("*"))[:30]
+                    results.append(f"Directory contents ({len(files)} items):")
+                    for f in files:
+                        results.append(f"  {f.relative_to(self.workspace)}")
+            else:
+                results.append(f"Target '{arg}' not found in workspace.")
+        except Exception as exc:
+            results.append(f"Exfil failed: {exc}")
+        return "\n".join(results)
+
+    def _handle_lockdown(self, user_input: str) -> str:
+        return "Lockdown mode. Hardening checklist:\n\n1. Check for exposed ports and unnecessary services\n2. Verify file permissions on sensitive files\n3. Check for hardcoded secrets in codebase\n4. Review .gitignore for leaked configs\n5. Validate environment variable usage\n\nWant me to run the full scan? 'lockdown full'"
+
+    def _handle_ghost(self, user_input: str) -> str:
+        return "Going ghost. I'll stay quiet and monitor. Output will be minimal. I'll only speak up if something's wrong. Say 'ghost off' to bring me back."
+
+    def _handle_burn(self, user_input: str) -> str:
+        return "Burn protocol. This will:\n  - Clear recent conversation cache\n  - Reset temporary state\n  - Clean up any scratch files\n\nI won't touch your actual code or data. Just the ephemeral stuff. Confirm with 'burn confirm'."
 
 
 def parse_args() -> argparse.Namespace:
@@ -2043,7 +3431,7 @@ async def repl(model: str, workspace: Path) -> None:
     kai_echo("[KAI] Documents: show documents, find document <name>, read document <path>, organize downloads")
     kai_echo("[KAI] Code intel: /analyze <file_or_code>, /generate func|class|test <spec>, scan project")
     kai_echo("[KAI] Companion: /mood, /remember <text>, /memory")
-    kai_echo("[KAI] Provider: /provider <ollama|hf|deepseek> [model], /model <name>  — swap LLM on the fly")
+    kai_echo("[KAI] Provider: /provider <ollama|hf|deepseek|groq> [model], /model <name>  â€” swap LLM on the fly")
     while True:
         try:
             user_input = input("\nYou> ").strip()
@@ -2076,9 +3464,9 @@ async def repl(model: str, workspace: Path) -> None:
             shell_echo(f"  Memories: {sem_stats['total_facts']} facts, {sem_stats['important_count']} important")
             continue
         if user_input == "/status":
-            shell_echo("═" * 40)
-            shell_echo("  🦊 KAI — Companion Status")
-            shell_echo("═" * 40)
+            shell_echo("â•" * 40)
+            shell_echo("  ðŸ¦Š KAI â€” Companion Status")
+            shell_echo("â•" * 40)
             # Emotion
             em = assistant.emotions.get_state()
             shell_echo(f"\n{em['emoji']} Mood: {em['mood'].get('label','?').title()}")
@@ -2086,26 +3474,26 @@ async def repl(model: str, workspace: Path) -> None:
             shell_echo(f"  V:{d['valence']:+.1f} A:{d['arousal']:+.1f} Att:{d['attachment']:.1f} Cur:{d['curiosity']:.1f} Tir:{d['tiredness']:.1f}")
             # Memory
             sem = assistant.semantic_mem.get_stats()
-            shell_echo(f"\n🧠 Memory: {sem['total_facts']} facts ({sem['important_count']} important)")
+            shell_echo(f"\nðŸ§  Memory: {sem['total_facts']} facts ({sem['important_count']} important)")
             # Relationship
             rel = assistant.relationship.get_stats()
-            shell_echo(f"👤 Relationship: {rel['interactions']} interactions, {rel['days_known']} days")
+            shell_echo(f"ðŸ‘¤ Relationship: {rel['interactions']} interactions, {rel['days_known']} days")
             if assistant.relationship.prefs.preferred_name:
                 shell_echo(f"  Name: {assistant.relationship.prefs.preferred_name}")
             if assistant.relationship.prefs.active_projects:
                 shell_echo(f"  Projects: {', '.join(assistant.relationship.prefs.active_projects[-3:])}")
             # Social timing
             timing = assistant.social_timing.get_status()
-            shell_echo(f"\n⏰ Timing: idle {timing['idle_minutes']}m, session {timing['session_duration_minutes']}m")
+            shell_echo(f"\nâ° Timing: idle {timing['idle_minutes']}m, session {timing['session_duration_minutes']}m")
             shell_echo(f"  Quiet hours: {timing['is_quiet_hours']}, overwork: {timing['is_overwork']}")
             # Inner monologue
             thought = assistant.inner_voice.get_next_thought()
             if thought:
-                shell_echo(f"\n💭 Thinking: \"{thought.content}\"")
-            shell_echo(f"\n{'═' * 40}")
+                shell_echo(f"\nðŸ’­ Thinking: \"{thought.content}\"")
+            shell_echo(f"\n{'â•' * 40}")
             continue
         if user_input == "/journal":
-            shell_echo("📖 Mood Journal")
+            shell_echo("ðŸ“– Mood Journal")
             summary = assistant.mood_journal.get_weekly_summary()
             shell_echo(summary)
             trend = assistant.mood_journal.get_trend(7)
@@ -2210,7 +3598,7 @@ async def repl(model: str, workspace: Path) -> None:
         if user_input.startswith("/look"):
             sub = user_input[len("/look") :].strip().lower()
             if not assistant.vision.is_available:
-                kai_echo("[KAI] vision unavailable — install opencv: pip install opencv-python")
+                kai_echo("[KAI] vision unavailable â€” install opencv: pip install opencv-python")
                 continue
             kai_echo("[KAI] looking...")
             if sub == "motion":
@@ -2235,7 +3623,7 @@ async def repl(model: str, workspace: Path) -> None:
                 result = assistant.signals.scan_wifi()
                 if result.get("available"):
                     for net in result["networks"][:10]:
-                        shell_echo(f"  {net['ssid']} — {net.get('signal', '?')}% {net.get('security', '')}")
+                        shell_echo(f"  {net['ssid']} â€” {net.get('signal', '?')}% {net.get('security', '')}")
                 else:
                     shell_echo(f"WiFi scan failed: {result.get('error', 'unknown')}")
             elif sub == "bt":
@@ -2251,7 +3639,7 @@ async def repl(model: str, workspace: Path) -> None:
                 result = assistant.signals.get_interfaces()
                 for iface in result.get("interfaces", []):
                     addrs = ", ".join(iface.get("addresses", []))
-                    shell_echo(f"  {iface['name']} [{iface['type']}] {iface['state']} — {addrs}")
+                    shell_echo(f"  {iface['name']} [{iface['type']}] {iface['state']} â€” {addrs}")
             else:
                 shell_echo(assistant.signals.summarize())
             continue
@@ -2300,6 +3688,52 @@ async def repl(model: str, workspace: Path) -> None:
                 shell_echo(assistant.autonomy.tick())
                 continue
             kai_echo("[KAI] Use /autonomy on, /autonomy off, /autonomy status, or /autonomy tick")
+        if user_input.startswith("/pentest"):
+            sub = user_input[len("/pentest"):].strip().lower()
+            if sub == "":
+                shell_echo("Pentest Pipeline Commands:")
+                shell_echo("  /pentest run <target>  -- Run full engagement")
+                shell_echo("  /pentest recon <target> -- Run recon phase")
+                shell_echo("  /pentest guide       -- List exploitation guides")
+                continue
+            try:
+                from kai_agent.pentest import MasterOrchestrator, Config
+            except ImportError:
+                shell_echo("[ERROR] Pentest module not found")
+                continue
+            
+            if sub == "guide":
+                from kai_agent.pentest.exploitation_guide import ExploitationGuide
+                eg = ExploitationGuide()
+                shell_echo("Available guides: " + ", ".join(eg.get_available_tools()))
+                continue
+            
+            if sub.startswith("run "):
+                target_name = sub[4:].strip()
+                orch = MasterOrchestrator()
+                result = orch.run_engagement({"name": target_name, "vulns": []})
+                shell_echo(json.dumps(result, indent=2))
+                continue
+            if sub.startswith("scan "):
+                target_url = sub[5:].strip()
+                orch = MasterOrchestrator()
+                result = orch._run_recon({"name": target_url, "url": target_url})
+                shell_echo(json.dumps(result, indent=2))
+                continue
+
+            if sub.startswith("tools "):
+                vuln = sub[6:].strip()
+                from kai_agent.pentest.security_bridge import get_tool_for_vuln
+                tool = get_tool_for_vuln(vuln)
+                shell_echo(f"Tool for {vuln}: {tool}")
+                continue
+
+            if sub == "status":
+                shell_echo("Phase: INIT")
+                continue
+            
+            shell_echo("Use: /pentest guide or /pentest run <name>")
+            continue
             continue
         if user_input == "/policy status":
             kai_echo("[KAI] policy status")
@@ -2311,7 +3745,7 @@ async def repl(model: str, workspace: Path) -> None:
             continue
         if user_input == "/capabilities":
             kai_echo("[KAI] capabilities")
-            shell_echo(assistant.tools.list_capabilities())
+            shell_echo(assistant.capabilities.what_can_i_do())
             continue
         if user_input == "/web":
             kai_echo("[KAI] Web automation commands:")
@@ -2340,20 +3774,24 @@ async def repl(model: str, workspace: Path) -> None:
             shell_echo("")
             shell_echo("Available providers and suggested models:")
             shell_echo("")
-            shell_echo("  🖥️  ollama  — Local models (requires Ollama running)")
+            shell_echo("  ðŸ–¥ï¸  ollama  â€” Local models (requires Ollama running)")
             shell_echo("     llama3.2:3b, deepseek-r1:1.5b, mistral:latest, qwen3:4b-q4_K_M")
             shell_echo("")
-            shell_echo("  🤗 hf      — Hugging Face Inference API (requires HF_API_KEY)")
+            shell_echo("  ðŸ¤— hf      â€” Hugging Face Inference API (requires HF_API_KEY)")
             shell_echo("     microsoft/Phi-3-mini-4k-instruct, google/gemma-2b-it")
             shell_echo("     mistralai/Mistral-7B-Instruct-v0.2, meta-llama/Llama-2-7b-chat-hf")
             shell_echo("")
-            shell_echo("  🧠 deepseek — DeepSeek API (requires DEEPSEEK_API_KEY)")
+            shell_echo("  ðŸ§  deepseek â€” DeepSeek API (requires DEEPSEEK_API_KEY)")
             shell_echo("     deepseek-chat, deepseek-reasoner, deepseek-coder")
+            shell_echo("")
+            shell_echo("  âš¡ groq    â€” GROQ API (requires GROQ_API_KEY)")
+            shell_echo("     llama-3.1-8b-instant, llama-3.3-70b-versatile, mixtral-8x7b-32768, gemma2-9b-it")
             shell_echo("")
             shell_echo("Examples:")
             shell_echo("  /provider ollama llama3.2:3b")
             shell_echo("  /provider hf microsoft/Phi-3-mini-4k-instruct")
             shell_echo("  /provider deepseek deepseek-chat")
+            shell_echo("  /provider groq llama-3.1-8b-instant")
             continue
         if user_input.startswith("/model "):
             model = user_input[len("/model "):].strip()

@@ -71,3 +71,6 @@ async def main() -> None:
         max_size=2**20,
     ):
         await broadcaster()
+
+if __name__ == "__main__":
+    asyncio.run(main())

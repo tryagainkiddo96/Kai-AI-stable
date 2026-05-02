@@ -62,6 +62,9 @@ KAI_ALL_CODE_BUNDLE.txt
 # Archive / scratch files
 archive/
 
+# Chrome temporary profile
+chrome_profile/
+
 # Runtime data
 conversation_memory/
 documents/misc/grab*.txt
