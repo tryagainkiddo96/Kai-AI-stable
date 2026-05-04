@@ -760,6 +760,18 @@ class KaiAssistant:
         return "general"
 
     async def ask(self, user_input: str) -> str:
+        # Quick provider status command (mac/windows alike)
+        if user_input.strip().lower() in {"/provider status", "/status"}:
+            try:
+                provider = getattr(self.client, 'provider', 'unknown')
+                model = getattr(self.client, 'model', 'unknown')
+                status = f"Provider: {provider}, Model: {model}"
+            except Exception:
+                status = "Provider status unavailable"
+            self._append_history_pair(user_input, status)
+            self.memory.append_session("assistant", status)
+            self._trim_history()
+            return status
         # On-demand readiness check command
         if user_input.strip().lower() in {"/ready", "status", "health"}:
             # Return a single string describing readiness of each subsystem
