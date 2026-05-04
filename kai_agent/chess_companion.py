@@ -13,20 +13,22 @@ import os
 import re
 from typing import Optional, Tuple
 
-import chess
-import chess.engine
+# note: chess is loaded lazily to support environments without python-chess installed
 
 
 class VisionModule:
-    def detect_board(self, source: Optional[str]) -> chess.Board:
-        """Return a Board object representing the current position.
-        If no source is provided, start from the standard initial position.
-        If the source looks like a FEN string, parse it; otherwise fall back to start position.
+    def detect_board(self, source: Optional[str]) -> object:
+        """Return a chess.Board-like object if python-chess is available.
+        If python-chess is not installed, return None to indicate unavailability.
         """
+        try:
+            import chess  # type: ignore
+        except Exception:
+            return None
         if not source:
             return chess.Board()
         s = source.strip()
-        # Heuristic: if it looks like a FEN (contains '/' and spaces), parse it
+        # Heuristic: if it looks like a FEN (contains '/' and digits), parse it
         if "/" in s and any(ch.isdigit() for ch in s):
             try:
                 return chess.Board(s)
@@ -49,27 +51,43 @@ class EngineWrapper:
     def __init__(self, engine_path: Optional[str] = None, depth: int = 6):
         self.engine = None
         self.depth = depth
-        if engine_path:
+        self._has_engine_lib = False
+        # Try to lazily import chess and engine libs
+        try:
+            import chess  # type: ignore
+            import chess.engine  # type: ignore
+            self._has_engine_lib = True
+        except Exception:
+            self._has_engine_lib = False
+        if engine_path and self._has_engine_lib:
             try:
-                self.engine = chess.engine.SimpleEngine.popen_uci(engine_path)
+                self.engine = chess.engine.SimpleEngine.popen_uci(engine_path)  # type: ignore
             except Exception:
                 self.engine = None
 
-    def best_move(self, board: chess.Board) -> Tuple[Optional[chess.Move], Optional[str]]:
-        if self.engine:
+    def best_move(self, board: object) -> Tuple[Optional[object], Optional[str]]:
+        # If no board or chess not available, signal unavailable
+        if board is None:
+            return None, None
+        # Try engine if available
+        if self.engine and self._has_engine_lib:
             try:
-                result = self.engine.play(board, chess.engine.Limit(depth=self.depth))
-                move = result.move
-                san = board.san(move) if move else None
+                import chess  # type: ignore
+                result = self.engine.play(board, chess.engine.Limit(depth=self.depth))  # type: ignore
+                move = result.move  # type: ignore
+                san = board.san(move) if move else None  # type: ignore
                 return move, san
             except Exception:
                 pass
-        # Fallback: pick the first legal move (educational, non-destructive)
-        moves = list(board.legal_moves)
+        # Fallback: first legal move
+        try:
+            moves = list(board.legal_moves)  # type: ignore
+        except Exception:
+            return None, None
         if not moves:
             return None, None
         move = moves[0]
-        san = board.san(move)
+        san = board.san(move) if hasattr(board, 'san') else str(move)
         return move, san
 
     def close(self) -> None:
