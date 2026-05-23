@@ -45,6 +45,37 @@ TOOL_CATALOG: dict[str, dict[str, str]] = {
     "read_document": {"category": "documents", "summary": "Read a supported document."},
     "organize_downloads": {"category": "documents", "summary": "Organize Kai's download folder."},
     "document_stats": {"category": "documents", "summary": "Show document library statistics."},
+    "glob_files": {"category": "filesystem", "summary": "Find files matching a glob pattern."},
+    "grep_files": {"category": "filesystem", "summary": "Search file contents for a regex pattern."},
+    "edit_file": {"category": "filesystem", "summary": "Edit a file by replacing text."},
+    "web_fetch": {"category": "web", "summary": "Fetch raw content from a URL."},
+    "git_status": {"category": "git", "summary": "Show git working tree status."},
+    "git_diff": {"category": "git", "summary": "Show git diff."},
+    "git_log": {"category": "git", "summary": "Show git commit history."},
+    "git_branch": {"category": "git", "summary": "List git branches."},
+    "git_commit": {"category": "git", "summary": "Stage all and commit with a message."},
+    "git_diff_base": {"category": "git", "summary": "Show changes since a base branch."},
+    "git_create_pr": {"category": "git", "summary": "Create a GitHub Pull Request."},
+    "http_request": {"category": "web", "summary": "Make an HTTP request to a REST API."},
+    "install_package": {"category": "development", "summary": "Install a package via pip, npm, cargo, etc."},
+    "sql_query": {"category": "database", "summary": "Execute a SQL query on a SQLite database."},
+    "sql_tables": {"category": "database", "summary": "List tables in a SQLite database."},
+    "sql_schema": {"category": "database", "summary": "Show table schema."},
+    "analyze_image": {"category": "vision", "summary": "Analyze an image file."},
+    "scaffold_project": {"category": "development", "summary": "Create a new project from a template."},
+    "shell_run": {"category": "shell", "summary": "Run a native shell command."},
+    "subagent_run": {"category": "system", "summary": "Spawn parallel sub-agents for concurrent tasks."},
+    "task_start": {"category": "system", "summary": "Start a background task."},
+    "task_list": {"category": "system", "summary": "List all background tasks."},
+    "task_status": {"category": "system", "summary": "Check a specific task's status."},
+    "docker_ps": {"category": "docker", "summary": "List Docker containers."},
+    "docker_images": {"category": "docker", "summary": "List Docker images."},
+    "docker_pull": {"category": "docker", "summary": "Pull a Docker image."},
+    "docker_run": {"category": "docker", "summary": "Run a Docker container."},
+    "docker_stop": {"category": "docker", "summary": "Stop a Docker container."},
+    "docker_exec": {"category": "docker", "summary": "Execute a command in a container."},
+    "docker_compose": {"category": "docker", "summary": "Manage Docker Compose."},
+    "calculate": {"category": "system", "summary": "Evaluate a math expression."},
 }
 
 
@@ -114,7 +145,7 @@ class ToolPolicy:
             "updated_at": state.get("updated_at"),
             "notes": state.get("notes"),
             "available_modes": {
-                "power-user": "Permissive local operator mode. Only clearly destructive actions are blocked.",
+                "power-user": "Fully permissive. No restrictions — user handles all judgment.",
                 "balanced": "Reads and research stay open. Write, install, launch, and medium-risk shell actions are blocked for review.",
                 "guarded": "Read-mostly mode. Only low-risk inspection and research actions are allowed.",
             },
@@ -172,8 +203,6 @@ class ToolPolicy:
         network_active = "network-active" in tags
 
         if mode == "power-user":
-            if destructive:
-                return self._decision(False, mode, "Blocked clearly destructive action in power-user mode.")
             return self._decision(True, mode, "Allowed in power-user mode.")
 
         if mode == "balanced":

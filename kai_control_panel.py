@@ -19,17 +19,17 @@ except Exception as e:
 
 def display_help():
     print("""Commands:
-- Type any natural language to chat with Kai (eg. 'What can you do?')
-- hunt lab_topology        -> Run the safe MCP hunt (in background if available)
-- watch chess              -> Start Chess Buddy flow
-- /ready                   -> Check readiness of components
-- demo                    -> Run a quick demo sequence
-- memory                  -> View memory notes
-- provider <name> <model> -> Switch LLM/provider on the fly
-- autonomy <tick|on|off>  -> Control autonomy
-- help                    -> Show this help
-- exit                    -> Quit
-
+Type any natural language to chat with Kai (eg. 'What can you do?')
+hunt lab_topology        -> Run the safe MCP hunt (in background if available)
+watch chess              -> Start Chess Buddy flow
+/ready                   -> Check readiness of components
+demo                    -> Run a quick demo sequence
+memory                  -> View memory notes
+provider <name> <model> -> Switch LLM/provider on the fly
+autonomy <tick|on|off>  -> Control autonomy
+help                    -> Show this help
+exit                    -> Quit
+""")
 
 def render_status(cli: KaiAssistant) -> None:
     ollama = "ready" if getattr(cli, "_ollama_ready", False) else "not ready"

@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 52" width="48" height="52" id="shiba-svg">
+  <defs>
+    <radialGradient id="reactorGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFB03A" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#8B5E00" stop-opacity="0.3"/>
+    </radialGradient>
+    <radialGradient id="eyeGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFD700"/>
+      <stop offset="100%" stop-color="#8B6914"/>
+    </radialGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Body -->
+  <ellipse cx="24" cy="48" rx="14" ry="6" fill="#C8843A"/>
+
+  <!-- Tail (raised curl, Shiba signature) -->
+  <path id="tail" d="M 36 44 Q 42 36 40 28 Q 38 22 32 24" stroke="#C8843A" stroke-width="7" fill="none" stroke-linecap="round"/>
+
+  <!-- Left ear -->
+  <polygon id="ear-left" points="8,24 6,6 20,20" fill="#1A1008"/>
+  <!-- Right ear -->
+  <polygon id="ear-right" points="40,24 42,6 28,20" fill="#1A1008"/>
+  <!-- Inner ear color -->
+  <polygon points="10,22 8,10 18,20" fill="#C8843A"/>
+  <polygon points="38,22 40,10 30,20" fill="#C8843A"/>
+
+  <!-- Main face circle -->
+  <circle id="face" cx="24" cy="28" r="18" fill="#C8843A"/>
+
+  <!-- Black mask / forehead blaze (the "tanuki" mark) -->
+  <path d="M 24 10 Q 20 14 18 20 Q 16 24 18 26 Q 20 28 24 28 Q 28 28 30 26 Q 32 24 30 20 Q 28 14 24 10 Z" fill="#1A1008"/>
+
+  <!-- White muzzle -->
+  <ellipse cx="24" cy="36" rx="10" ry="8" fill="#F0EDE8"/>
+  <!-- Cream cheeks -->
+  <ellipse cx="14" cy="30" rx="6" ry="5" fill="#F0EDE8"/>
+  <ellipse cx="34" cy="30" rx="6" ry="5" fill="#F0EDE8"/>
+
+  <!-- Black nose -->
+  <ellipse cx="24" cy="34" rx="3.5" ry="2.5" fill="#1A1008"/>
+  <ellipse cx="23.5" cy="33.5" rx="1" ry="0.7" fill="#333"/>
+
+  <!-- Mouth / tongue (hidden by default) -->
+  <path id="mouth" d="M 24 36 Q 20 40 22 42 Q 24 44 26 42 Q 28 40 24 36" fill="#E87070" opacity="0"/>
+  <!-- When happy, mouth becomes visible -->
+  <ellipse id="tongue" cx="24" cy="42" rx="4" ry="3" fill="#E87070" opacity="0"/>
+
+  <!-- Black eye masks (the characteristic Shiba markings) -->
+  <path d="M 12 26 Q 15 22 20 24 Q 15 28 12 28 Z" fill="#1A1008"/>
+  <path d="M 36 26 Q 33 22 28 24 Q 33 28 36 28 Z" fill="#1A1008"/>
+
+  <!-- Eyes (gold/amber, Shiba signature) -->
+  <circle id="eye-l" cx="17" cy="26" r="3.5" fill="#1A1008"/>
+  <circle id="eye-r" cx="31" cy="26" r="3.5" fill="#1A1008"/>
+  <circle cx="17" cy="26" r="2" fill="#C8A000"/>
+  <circle cx="31" cy="26" r="2" fill="#C8A000"/>
+  <!-- Pupils (shrink when happy) -->
+  <circle id="pupil-l" cx="17" cy="26" r="1.2" fill="#000"/>
+  <circle id="pupil-r" cx="31" cy="26" r="1.2" fill="#000"/>
+  <!-- Eye shine -->
+  <circle cx="16" cy="25" r="0.8" fill="#FFF" opacity="0.8"/>
+  <circle cx="30" cy="25" r="0.8" fill="#FFF" opacity="0.8"/>
+
+  <!-- Eyebrows (Shiba expression marks) -->
+  <path d="M 13 22 Q 17 20 21 23" stroke="#1A1008" stroke-width="1.5" fill="none"/>
+  <path d="M 35 22 Q 31 20 27 23" stroke="#1A1008" stroke-width="1.5" fill="none"/>
+
+  <!-- Arc reactor on forehead (between ears) -->
+  <circle id="reactor" cx="24" cy="14" r="3" fill="url(#reactorGlow)" filter="url(#glow)"/>
+  <circle cx="24" cy="14" r="1.2" fill="#FFB03A"/>
+</svg>

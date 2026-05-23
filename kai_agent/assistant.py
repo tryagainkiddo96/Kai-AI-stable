@@ -243,10 +243,6 @@ class KaiAssistant:
             save_path=workspace / "memory" / "legion_army.json",
             source_path=workspace / "kai-legion&chimera.py",
         )
-        self.chimera = ChimeraController(
-            save_path=workspace / "memory" / "chimera_fingerprint.json",
-            source_path=workspace / "kai-legion&chimera.py",
-        )
 
         self.planner = TaskPlanner(workspace, tools=self.tools)
 
@@ -806,11 +802,22 @@ class KaiAssistant:
                 self._trim_history()
                 return fallback
 
-        # New: watch chess board and talk about it
-        if "watch chess" in user_input.lower():
-            # Optional source after the command: "watch chess <source>"
+        # Chess intent: match any message about chess (natural language friendly)
+        words = set(user_input.lower().split())
+        if "chess" in words or any(kw in user_input.lower() for kw in ["watch chess", "play chess", "start chess"]):
+            source = None
             parts = user_input.split(None, 2)
-            source = parts[2] if len(parts) >= 3 else None
+            if any(kw in user_input.lower() for kw in ["watch chess", "start chess"]):
+                source = parts[2] if len(parts) >= 3 else None
+            # Try screen OCR first for real board context
+            if not source:
+                try:
+                    ocr_result = json.loads(self.tools.capture_screen_ocr())
+                    ocr_text = ocr_result.get("text", "") if isinstance(ocr_result, dict) else ""
+                    if ocr_text and len(ocr_text) > 20:
+                        source = ocr_text
+                except Exception:
+                    pass
             try:
                 cc = ChessCompanion()
                 report = cc.watch_board(source)
@@ -920,16 +927,19 @@ class KaiAssistant:
                     self._trim_history()
                     return web_response
 
-        # Fast health check â€” fail immediately if provider is unreachable
+        # Fast health check â€” retry auto-start once before failing
         if self.client.provider == "ollama" and not self.client.is_reachable(timeout=2):
-            error_message = (
-                f"Ollama is not reachable at {self.client.base_url}. "
-                f"Make sure Ollama is running and the model `{self.client.model}` is pulled."
-            )
-            self.logger.log("assistant_error", user_input=user_input, error=error_message)
-            self.memory.append_session("assistant", error_message)
-            self._append_history_pair(user_input, error_message)
-            raise RuntimeError(error_message)
+            self._ensure_ollama_running()
+            self._ollama_ready = self._wait_for_ollama_ready(max_wait_seconds=20, initial_delay=0.5)
+            if not self._ollama_ready:
+                error_message = (
+                    f"Ollama is not reachable at {self.client.base_url}. "
+                    f"Make sure Ollama is running and the model `{self.client.model}` is pulled."
+                )
+                self.logger.log("assistant_error", user_input=user_input, error=error_message)
+                self.memory.append_session("assistant", error_message)
+                self._append_history_pair(user_input, error_message)
+                raise RuntimeError(error_message)
         elif self.client.provider in {"huggingface", "hf", "deepseek", "groq", "codex", "openai-codex", "openai"}:
             # Cloud providers: check API key is set
             if self.client.provider in {"huggingface", "hf"} and not self.client.hf_api_key:
@@ -973,8 +983,7 @@ class KaiAssistant:
         except Exception as exc:
             fallback_reply = await asyncio.to_thread(self._fallback_response, user_input, prompt, str(exc), messages)
             if not fallback_reply:
-                # No fallback available; switch to offline adaptive reply to avoid hard failure
-                offline = f"[Recovery mode] Ollama unavailable; offline fallback engaged. You asked: {user_input}"
+                offline = self._offline_personality_response()
                 await send_event("kai_sleep")
                 self.logger.log(
                     "offline_fallback",
@@ -1177,6 +1186,18 @@ class KaiAssistant:
             )
             return None
 
+    @staticmethod
+    def _offline_personality_response() -> str:
+        import random
+        messages = [
+            "[Recovery mode] Apologies — my primary neural core is catching some Z's. I've logged your request; once I'm back online I'll pick it right up.",
+            "[Recovery mode] My main processor appears to be on a coffee break. Running on auxiliary power — fire away and I'll do my best with what I've got.",
+            "[Recovery mode] Primary cognitive matrix unreachable. I'm running on emergency backup reserves — a bit like a pocket calculator with ambition.",
+            "[Recovery mode] Offline fallback active. Think of me as Jarvis on a potato — functional, but don't ask me to do calculus.",
+            "[Recovery mode] I'm afraid the main engine is taking an unscheduled siesta. I've made a note of it for when I'm back at full capacity.",
+        ]
+        return random.choice(messages)
+
     def _fallback_response(
         self,
         user_input: str,
@@ -1251,8 +1272,7 @@ class KaiAssistant:
             web_error=research.get("error", "web research unavailable"),
             fallback_errors=fallback_errors,
         )
-        # Final fallback: return a concise offline-adapted reply
-        return f"[Recovery mode] Ollama unavailable; offline fallback engaged. You asked: {user_input}"
+        return self._offline_personality_response()
 
     def _browser_fallback_response(self, user_input: str, primary_error: str, web_error: str) -> str:
         try:

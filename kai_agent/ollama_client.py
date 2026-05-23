@@ -48,7 +48,7 @@ class OllamaClient:
         self.default_timeout = int(os.environ.get("KAI_OLLAMA_TIMEOUT", "180"))
         self.temperature = float(os.environ.get("KAI_TEMPERATURE", "0.7"))
         self.repeat_penalty = float(os.environ.get("KAI_REPEAT_PENALTY", "1.15"))
-        self.num_predict = int(os.environ.get("KAI_NUM_PREDICT", "512"))
+        self.num_predict = int(os.environ.get("KAI_NUM_PREDICT", "2048"))
         self.num_ctx = int(os.environ.get("KAI_NUM_CTX", "4096"))
         self.model_inventory_ttl = int(os.environ.get("KAI_MODEL_INVENTORY_TTL", "15"))
         self._model_inventory_cache: tuple[float, list[str]] | None = None

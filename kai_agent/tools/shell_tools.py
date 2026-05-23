@@ -54,6 +54,10 @@ class ShellTools:
         except Exception as exc:
             return json.dumps({"action": "run_shell", "command": command, "returncode": -1, "stdout": "", "stderr": f"Command failed: {exc}", **meta}, indent=2)
 
+    @staticmethod
+    def _clean_wsl_output(text: str) -> str:
+        return text.replace("\x00", "").strip()[:8000]
+
     def run_wsl(self, command: str, timeout: int = 60, distro: str = "kali-linux") -> str:
         meta = self.classify_command(command)
         try:
@@ -63,7 +67,9 @@ class ShellTools:
                 completed = subprocess.run(["wsl.exe", "-d", distro, "--", "bash", "-lc", command], cwd=str(self.workspace), capture_output=True, timeout=timeout, **SUBPROCESS_TEXT_KWARGS)
             return json.dumps({
                 "action": "run_wsl", "command": command, "distro": distro,
-                "returncode": completed.returncode, "stdout": completed.stdout.strip()[:8000], "stderr": completed.stderr.strip()[:4000], **meta,
+                "returncode": completed.returncode,
+                "stdout": self._clean_wsl_output(completed.stdout),
+                "stderr": self._clean_wsl_output(completed.stderr)[:4000], **meta,
             }, indent=2)
         except subprocess.TimeoutExpired:
             return json.dumps({"action": "run_wsl", "command": command, "distro": distro, "returncode": -1, "stdout": "", "stderr": f"WSL command timed out after {timeout}s", **meta}, indent=2)

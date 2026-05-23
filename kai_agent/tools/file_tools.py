@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -49,6 +50,47 @@ class FileTools:
             return "\n".join(items)
         except Exception as exc:
             return f"[Error listing {target}: {exc}]"
+
+    def glob_files(self, pattern: str, search_path: str = "") -> str:
+        """Find files matching a glob pattern. Returns JSON with list of matching paths."""
+        target = self._resolve_path(search_path) if search_path else self.workspace
+        if not target.exists():
+            return f'[Error: Path not found: {target}]'
+        try:
+            matches = list(target.rglob(pattern))
+            if not matches:
+                return json.dumps({"action": "glob", "ok": True, "pattern": pattern, "path": str(target), "matches": []}, indent=2)
+            result = [str(m.relative_to(self.workspace)) if m.is_relative_to(self.workspace) else str(m) for m in sorted(matches)[:200]]
+            return json.dumps({"action": "glob", "ok": True, "pattern": pattern, "path": str(target), "count": len(result), "matches": result}, indent=2)
+        except Exception as exc:
+            return json.dumps({"action": "glob", "ok": False, "pattern": pattern, "error": str(exc)}, indent=2)
+
+    def grep_files(self, pattern: str, search_path: str = "", file_pattern: str = "") -> str:
+        """Search file contents using a regex pattern. Returns JSON with file+line matches."""
+        target = self._resolve_path(search_path) if search_path else self.workspace
+        if not target.exists():
+            return f'[Error: Path not found: {target}]'
+        try:
+            matches = []
+            files = list(target.rglob(file_pattern)) if file_pattern else [target] if target.is_file() else list(target.rglob("*"))
+            for fpath in files:
+                if not fpath.is_file():
+                    continue
+                try:
+                    lines = fpath.read_text(encoding="utf-8", errors="replace").split("\n")
+                    for i, line in enumerate(lines, 1):
+                        if re.search(pattern, line, re.IGNORECASE):
+                            rel = str(fpath.relative_to(self.workspace)) if fpath.is_relative_to(self.workspace) else str(fpath)
+                            matches.append({"file": rel, "line": i, "content": line.strip()[:120]})
+                            if len(matches) >= 100:
+                                break
+                    if len(matches) >= 100:
+                        break
+                except Exception:
+                    continue
+            return json.dumps({"action": "grep", "ok": True, "pattern": pattern, "count": len(matches), "matches": matches}, indent=2)
+        except Exception as exc:
+            return json.dumps({"action": "grep", "ok": False, "pattern": pattern, "error": str(exc)}, indent=2)
 
     def write_file(self, path: str, content: str, policy) -> str:
         target = self._resolve_path(path)

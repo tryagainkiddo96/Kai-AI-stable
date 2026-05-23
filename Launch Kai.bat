@@ -1,31 +1,24 @@
 @echo off
-REM==============================================================================
-REM KAI LAUNCHER - Beautiful Terminal UI
-REM Double-click to launch Kai AI Dashboard
-REM==============================================================================
+REM ========================================
+REM K//AI COMPANION — LAUNCHER
+REM Double-click to start Kai in browser
+REM ========================================
 
 cd /d "%~dp0"
 
-echo ╔═══════════════════════════════════════════════════════════╗
-echo ║              KAI AI LAUNCHER                              ║
-echo ║         Beautiful Terminal UI for Kai AI               ║
-echo ╚═══════════════════════════════════════════════════════════╝
-echo.
-
-REM Check Python
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo ERROR: Python not found.
-    echo Please install Python 3.10+ from https://python.org
-    pause
-    exit /b 1
-)
-
-echo Starting Kai Dashboard...
-echo.
-
-python kai_dashboard.py
+title K//AI Companion
 
 echo.
-echo Kai session ended.
+echo  K//AI COMPANION
+echo  Black & Tan Shiba Inu — JARVIS-Class AI
+echo  ================================================
+echo.
+echo  Starting server and opening browser...
+echo  (Close this window or press Ctrl+C to stop)
+echo.
+
+python kai_web_ui.py
+
+echo.
+echo  Server stopped.
 pause

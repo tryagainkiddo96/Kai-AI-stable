@@ -1187,3 +1187,176 @@ $bitmap.Dispose()
             "action": "check_ip_leaks",
             **self.anonymity.check_ip(),
         }, indent=2)
+
+    # ── Forex Data ────────────────────────────────────────────────────────────
+
+    def get_forex_data(self, pairs: str = "all") -> str:
+        """Fetch live forex exchange rates from free API."""
+        try:
+            import urllib.request
+            if pairs.lower() == "all":
+                url = "https://open.er-api.com/v6/latest/USD"
+            else:
+                base = pairs.split("/")[0].strip().upper() if "/" in pairs else "USD"
+                url = f"https://open.er-api.com/v6/latest/{base}"
+            req = urllib.request.Request(url, headers={"User-Agent": "KaiAI/1.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+            if data.get("result") != "success":
+                return json.dumps({"ok": False, "error": data.get("error-type", "API error")}, indent=2)
+            rates = data.get("rates", {})
+            timestamp = data.get("time_last_update_utc", "unknown")
+            if pairs.lower() != "all":
+                targets = [p.strip().upper() for p in pairs.split(",")]
+                filtered = {}
+                for t in targets:
+                    if "/" in t:
+                        _, quote = t.split("/", 1)
+                    else:
+                        quote = t
+                    if quote in rates:
+                        filtered[t] = rates[quote]
+                    else:
+                        filtered[t] = f"not found (available: USD, EUR, GBP, JPY, AUD, CAD, CHF, CNY, NZD, ...)"
+                return json.dumps({
+                    "ok": True, "base": data.get("base_code", "USD"),
+                    "rates": filtered, "updated": timestamp
+                }, indent=2)
+            return json.dumps({
+                "ok": True, "base": "USD", "rate_count": len(rates),
+                "updated": timestamp,
+                "rates": {k: rates[k] for k in list(rates.keys())[:50]},
+                "note": f"Full data has {len(rates)} currencies. Shown first 50."
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, indent=2)
+
+    # ── SMS Gateway ───────────────────────────────────────────────────────────
+
+    def send_sms(self, number: str, message: str) -> str:
+        """Send SMS via email-to-carrier gateway. Tries multiple carriers."""
+        # Known carrier email-to-SMS gateways
+        gateways = {
+            "verizon": "vtext.com",
+            "att": "txt.att.net",
+            "tmobile": "tmomail.net",
+            "sprint": "messaging.sprintpcs.com",
+            "cricket": "mms.cricketwireless.net",
+            "googlefi": "msg.fi.google.com",
+            "boost": "sms.myboostmobile.com",
+            "uscellular": "email.uscc.net",
+            "straighttalk": "vtext.com",
+            "consumercellular": "mailmymobile.com",
+            "xfinity": "vtext.com",
+            "republic": "text.republicwireless.com",
+            "tracfone": "mmst5.tracfone.com",
+        }
+        cleaned = number.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "").replace("+", "")
+        results = []
+        try:
+            import smtplib
+            from email.message import EmailMessage
+            sender = "kai@localhost"
+            for carrier, domain in gateways.items():
+                to_addr = f"{cleaned}@{domain}"
+                try:
+                    msg = EmailMessage()
+                    msg.set_content(message)
+                    msg["Subject"] = ""
+                    msg["From"] = sender
+                    msg["To"] = to_addr
+                    # Try localhost:25 (common if no SMTP auth needed)
+                    with smtplib.SMTP("localhost", 25, timeout=5) as s:
+                        s.send_message(msg)
+                    results.append(f"Sent via {carrier} ({to_addr})")
+                except (ConnectionRefusedError, OSError, smtplib.SMTPException):
+                    # Try without SMTP server — write to file as fallback
+                    pass
+            if results:
+                return json.dumps({"ok": True, "method": "email_gateway", "results": results, "note": "Tested all major carriers."}, indent=2)
+            # Fallback: save SMS request to file
+            sms_file = self.tmp_dir / f"sms_pending_{int(time.time())}.txt"
+            with open(sms_file, "w") as f:
+                f.write(f"TO: {number}\nMESSAGE: {message}\n")
+            return json.dumps({
+                "ok": True, "method": "saved",
+                "file": str(sms_file),
+                "note": "No SMTP server available. SMS request saved. Install a local SMTP (like hMailServer) or use ADB phone control."
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, indent=2)
+
+    # ── Grid Click ────────────────────────────────────────────────────────────
+
+    def grid_click(self, x_pct: float, y_pct: float) -> str:
+        """Click at percentage-based position on screen."""
+        try:
+            w, h = pyautogui.size()
+            x = int(w * x_pct / 100)
+            y = int(h * y_pct / 100)
+            pyautogui.click(x, y)
+            return json.dumps({"action": "grid_click", "ok": True, "x": x, "y": y, "x_pct": x_pct, "y_pct": y_pct}, indent=2)
+        except Exception as e:
+            return json.dumps({"action": "grid_click", "ok": False, "error": str(e)}, indent=2)
+
+    # ── App Install ───────────────────────────────────────────────────────────
+
+    def install_app(self, app_name: str) -> str:
+        """Install an app via winget, choco, or direct download."""
+        name = app_name.strip().lower()
+        # Known app name mappings
+        known = {
+            "textnow": ("winget", "TextNow.TextNow"),
+            "discord": ("winget", "Discord.Discord"),
+            "firefox": ("winget", "Mozilla.Firefox"),
+            "chrome": ("winget", "Google.Chrome"),
+            "notepad++": ("winget", "Notepad++.Notepad++"),
+            "7zip": ("winget", "7zip.7zip"),
+            "python": ("winget", "Python.Python.3.12"),
+            "git": ("winget", "Git.Git"),
+            "vscode": ("winget", "Microsoft.VisualStudioCode"),
+            "obsidian": ("winget", "Obsidian.Obsidian"),
+            "telegram": ("winget", "Telegram.TelegramDesktop"),
+            "whatsapp": ("winget", "WhatsApp.WhatsApp"),
+            "signal": ("winget", "Signal.Signal"),
+            "vlc": ("winget", "VideoLAN.VLC"),
+            "spotify": ("winget", "Spotify.Spotify"),
+        }
+        if name in known:
+            mgr, pkg = known[name]
+            if mgr == "winget":
+                try:
+                    r = subprocess.run(
+                        ["winget", "install", "--id", pkg, "--silent", "--accept-package-agreements"],
+                        capture_output=True, text=True, timeout=120
+                    )
+                    if r.returncode == 0 or "success" in r.stdout.lower():
+                        return json.dumps({"ok": True, "app": name, "method": "winget", "output": r.stdout[:500]}, indent=2)
+                    return json.dumps({"ok": False, "app": name, "method": "winget", "error": r.stderr[:300]}, indent=2)
+                except FileNotFoundError:
+                    pass
+                except subprocess.TimeoutExpired:
+                    return json.dumps({"ok": False, "app": name, "method": "winget", "error": "winget timed out"})
+            # Fallback to choco
+            try:
+                r = subprocess.run(
+                    ["choco", "install", name, "-y"],
+                    capture_output=True, text=True, timeout=120
+                )
+                if r.returncode == 0:
+                    return json.dumps({"ok": True, "app": name, "method": "choco", "output": r.stdout[:500]}, indent=2)
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+        # Generic web search + download attempt
+        try:
+            import urllib.request
+            search_url = f"https://api.duckduckgo.com/?q={name}+download+windows&format=json"
+            req = urllib.request.Request(search_url, headers={"User-Agent": "KaiAI/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                pass  # We'll just tell the user to download manually
+        except Exception:
+            pass
+        return json.dumps({
+            "ok": False, "app": name,
+            "note": f"Could not auto-install '{name}'. Try: web_search for download page, then browser_open the URL."
+        }, indent=2)

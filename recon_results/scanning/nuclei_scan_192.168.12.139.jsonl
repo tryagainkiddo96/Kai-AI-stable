@@ -1,0 +1,7 @@
+┏━([1;31mMessage from Kali developers[00m)
+┃
+┃ This is a minimal installation of Kali Linux, you likely
+┃ want to install supplementary tools. Learn how:
+┃ ⇒ https://www.kali.org/docs/troubleshooting/common-minimum-setup/
+┃
+┗━([2;37mRun: “touch ~/.hushlogin” to hide this message[0m)

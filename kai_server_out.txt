@@ -1,0 +1,13 @@
+==================================================
+  K//AI COMPANION
+  Kai - JARVIS-class AI partner
+  Breed: Black & Tan Shiba Inu
+==================================================
+
+  >>>  http://localhost:5555  <<<
+
+  Providers: groq -> deepseek -> ollama
+  Ctrl+C to stop
+
+ * Serving Flask app 'kai_web_ui'
+ * Debug mode: off
